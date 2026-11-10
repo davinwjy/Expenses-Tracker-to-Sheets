@@ -119,8 +119,8 @@ export const TopHeader: React.FC<TopHeaderProps> = ({
   const currentMeta = pageMeta[activeTab] || pageMeta.dashboard;
 
   return (
-    <header className="sticky top-0 z-20 bg-white/95 dark:bg-[#080a0f]/95 backdrop-blur-md border-b border-slate-200 dark:border-[#1a1f2c] h-13 flex items-center px-3 sm:px-5 lg:px-6 transition-colors">
-      <div className="flex items-center justify-between w-full">
+    <header className="sticky top-0 z-20 bg-white/95 dark:bg-[#080a0f]/95 backdrop-blur-md border-b border-slate-200 dark:border-[#1a1f2c] pt-safe flex items-center px-3 sm:px-5 lg:px-6 transition-colors min-h-[3.25rem]">
+      <div className="flex items-center justify-between w-full py-1.5">
         {/* Left: Mobile Menu Trigger + Clean Page Title */}
         <div className="flex items-center gap-3 min-w-0">
           <button

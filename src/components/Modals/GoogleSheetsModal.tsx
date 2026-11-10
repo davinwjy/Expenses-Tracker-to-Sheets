@@ -81,13 +81,19 @@ export const GoogleSheetsModal: React.FC<GoogleSheetsModalProps> = ({ isOpen, on
     if (!user) return;
     const cleanWebhook = webhookUrl.trim();
     if (!cleanWebhook || !cleanWebhook.startsWith('https://script.google.com/')) {
-      setAuthError('Please paste a valid Google Apps Script Web App URL (starts with https://script.google.com/macros/s/.../exec)');
+      setAuthError('Harap masukkan Webhook URL Google Apps Script yang valid (diawali https://script.google.com/macros/s/.../exec)');
       return;
     }
 
     setIsLoading(true);
     setAuthError(null);
     try {
+      await saveGoogleSheetSettings({
+        spreadsheetId: extractSpreadsheetId(spreadsheetId),
+        webhookUrl: cleanWebhook,
+        autoSync: true,
+      });
+
       const res = await syncFinancialDataViaWebhook(cleanWebhook, {
         userEmail: user.email,
         usdIdrRate,
@@ -110,14 +116,14 @@ export const GoogleSheetsModal: React.FC<GoogleSheetsModalProps> = ({ isOpen, on
       });
 
       showNotification({
-        title: 'Google Sheets Synced Successfully',
-        message: `All 5 tabs (Summary, Accounts, Transactions, Investments, Budgets) for ${user.email} are now live in your Google Sheet!`,
+        title: 'Google Sheets Berhasil Disinkronkan',
+        message: `Seluruh data untuk ${user.email} telah berhasil diunggah ke Google Sheet!`,
         type: 'success',
       });
     } catch (err: any) {
       console.error('Google Sheets Webhook sync error:', err);
       setAuthError(
-        'Failed to reach Google Apps Script URL. Make sure you deployed as "Web app" with "Who has access: Anyone".'
+        'Gagal menghubungi URL Google Apps Script. Pastikan Anda melakukan Deploy sebagai Web app dengan Who has access: Anyone.'
       );
     } finally {
       setIsLoading(false);
@@ -129,20 +135,28 @@ export const GoogleSheetsModal: React.FC<GoogleSheetsModalProps> = ({ isOpen, on
     if (!user) return;
     const cleanWebhook = webhookUrl.trim();
     if (!cleanWebhook || !cleanWebhook.startsWith('https://script.google.com/')) {
-      setAuthError('Please paste a valid Google Apps Script Web App URL first.');
+      setAuthError('Harap masukkan Webhook URL Google Apps Script yang valid terlebih dahulu.');
       return;
     }
 
     setIsPulling(true);
     setAuthError(null);
     try {
+      // 1. Save settings first so FinanceContext has the latest URL
+      await saveGoogleSheetSettings({
+        spreadsheetId: extractSpreadsheetId(spreadsheetId),
+        webhookUrl: cleanWebhook,
+        autoSync: true,
+      });
+
+      // 2. Execute pull
       const ok = await pullFromGoogleSheet({ silent: false });
       if (ok) {
         const now = new Date().toLocaleString();
         setLastSynced(now);
       }
     } catch (err: any) {
-      setAuthError(err.message || 'Failed to pull data from Google Sheets.');
+      setAuthError(err.message || 'Gagal menarik data dari Google Sheets.');
     } finally {
       setIsPulling(false);
     }
@@ -423,6 +437,15 @@ export const GoogleSheetsModal: React.FC<GoogleSheetsModalProps> = ({ isOpen, on
                 type="url"
                 value={webhookUrl}
                 onChange={(e) => setWebhookUrl(e.target.value)}
+                onBlur={() => {
+                  const clean = webhookUrl.trim();
+                  if (clean && clean.startsWith('https://script.google.com/')) {
+                    saveGoogleSheetSettings({
+                      webhookUrl: clean,
+                      autoSync: true,
+                    });
+                  }
+                }}
                 placeholder="https://script.google.com/macros/s/.../exec"
                 className="w-full px-3 py-2.5 rounded-xl bg-slate-50 dark:bg-[#080a0f] border border-slate-300 dark:border-[#1d2332] text-xs font-mono text-slate-900 dark:text-zinc-100 placeholder:text-slate-400 dark:placeholder:text-zinc-600 focus:outline-none focus:border-emerald-500"
               />

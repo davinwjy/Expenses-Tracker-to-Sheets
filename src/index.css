@@ -16,6 +16,15 @@
   }
 }
 
+/* Safe Area Inset Padding for Mobile Notch / Status Bar */
+.pt-safe {
+  padding-top: env(safe-area-inset-top, 0px);
+}
+
+.pb-safe {
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+}
+
 /* Bloomberg Terminal Razor Styling Utilities */
 .terminal-grid-border {
   border-color: #1a1f2c;
