@@ -87,7 +87,7 @@ define(['./workbox-13942bd7'], (function (workbox) { 'use strict';
     "revision": "00bb69f2f14c03fd4c1d746a0ffcfdf3"
   }, {
     "url": "index.html",
-    "revision": "d8b730d6e0b027101fefbd2bd69396e9"
+    "revision": "a47a7361401cd6569d3438525089cb4d"
   }, {
     "url": "icon.svg",
     "revision": "5623d5193c83dc630138a85b24e6ff40"
@@ -104,13 +104,13 @@ define(['./workbox-13942bd7'], (function (workbox) { 'use strict';
     "url": "assets/workbox-window.prod.es5-Bd17z0YL.js",
     "revision": null
   }, {
-    "url": "assets/web-BUsU44O5.js",
+    "url": "assets/web-z4M9Fgga.js",
+    "revision": null
+  }, {
+    "url": "assets/index-DbzwFKQG.js",
     "revision": null
   }, {
     "url": "assets/index-DOz7LDKV.css",
-    "revision": null
-  }, {
-    "url": "assets/index-CILRVYw3.js",
     "revision": null
   }, {
     "url": "assets/aistudio/image_ff7783a6.png",
@@ -156,6 +156,12 @@ define(['./workbox-13942bd7'], (function (workbox) { 'use strict';
     "revision": null
   }, {
     "url": "assets/aistudio/image_0247bb97.png",
+    "revision": null
+  }, {
+    "url": "assets/aistudio/Screenshot_2026-11-10_at_14.20.15_d59a72f8.png",
+    "revision": null
+  }, {
+    "url": "assets/aistudio/Screenshot_2026-11-10_at_14.20.01_6f4a6a3f.png",
     "revision": null
   }, {
     "url": "assets/aistudio/Screenshot_2026-11-10_at_11.57.13_7ebb6dad.png",

@@ -691,11 +691,19 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
         lastSheetPayloadHashRef.current = signature;
 
         if (!opts?.silent) {
-          showNotification({
-            title: 'Data Google Sheets Berhasil Dimuat',
-            message: `${fetchedAccs.length} Akun, ${fetchedTxs.length} Transaksi, dan ${normalizedInvestments.length} Investasi berhasil disinkronkan.`,
-            type: 'success',
-          });
+          if (fetchedAccs.length === 0 && fetchedTxs.length === 0 && fetchedInvs.length === 0) {
+            showNotification({
+              title: 'Google Sheet Masih Kosong',
+              message: 'Spreadsheet Google Sheet Anda belum terisi data portofolio. Silakan input transaksi atau klik "⚡ Kirim ke Google Sheet" terlebih dahulu.',
+              type: 'warning',
+            });
+          } else {
+            showNotification({
+              title: 'Data Google Sheets Berhasil Dimuat',
+              message: `${fetchedAccs.length} Akun, ${fetchedTxs.length} Transaksi, dan ${normalizedInvestments.length} Investasi berhasil disinkronkan.`,
+              type: 'success',
+            });
+          }
         }
         return true;
       } catch (err: any) {

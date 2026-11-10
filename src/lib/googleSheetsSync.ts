@@ -310,91 +310,227 @@ export async function fetchFinancialDataFromWebhook(
   const investments: Investment[] = [];
   const budgets: CategoryBudget[] = [];
 
-  // Parse Accounts (Tab 'Accounts')
-  const accRows = sheets.Accounts || [];
-  if (accRows.length > 1) {
-    for (let i = 1; i < accRows.length; i++) {
+  // Robust number parser for Indonesian formats, currency symbols (Rp, $), and dots/commas
+  const parseNumber = (val: any): number => {
+    if (typeof val === 'number') return isNaN(val) ? 0 : val;
+    if (!val) return 0;
+    let s = String(val).replace(/[^0-9.,-]/g, '').trim();
+    if (!s) return 0;
+    if (s.includes('.') && s.includes(',')) {
+      s = s.replace(/\./g, '').replace(',', '.');
+    } else if (s.includes('.')) {
+      const parts = s.split('.');
+      if (parts.length > 2 || (parts.length === 2 && parts[1].length === 3)) {
+        s = s.replace(/\./g, '');
+      }
+    } else if (s.includes(',')) {
+      const parts = s.split(',');
+      if (parts.length > 2 || (parts.length === 2 && parts[1].length === 3)) {
+        s = s.replace(/,/g, '');
+      } else {
+        s = s.replace(',', '.');
+      }
+    }
+    const n = parseFloat(s);
+    return isNaN(n) ? 0 : n;
+  };
+
+  // Flexible Tab Finder (supports English, Indonesian, Sheet1/2/3/4, or header keyword matching)
+  const findSheetRows = (possibleNames: string[], headerKeywords: string[]): any[] => {
+    for (const name of possibleNames) {
+      if (sheets[name] && Array.isArray(sheets[name]) && sheets[name].length > 0) {
+        return sheets[name];
+      }
+    }
+    const sheetKeys = Object.keys(sheets);
+    for (const name of possibleNames) {
+      const matchKey = sheetKeys.find((k) => k.trim().toLowerCase() === name.trim().toLowerCase());
+      if (matchKey && Array.isArray(sheets[matchKey]) && sheets[matchKey].length > 0) {
+        return sheets[matchKey];
+      }
+    }
+    // Fallback: inspect header row of ANY tab for matching keywords
+    for (const key of sheetKeys) {
+      const rows = sheets[key];
+      if (Array.isArray(rows) && rows.length > 0) {
+        const headerStr = (rows[0] || []).map((cell: any) => String(cell || '')).join(' ').toLowerCase();
+        if (headerKeywords.some((kw) => headerStr.includes(kw.toLowerCase()))) {
+          return rows;
+        }
+      }
+    }
+    return [];
+  };
+
+  const accRows = findSheetRows(
+    ['Accounts', 'Akun', 'Rekening', 'Bank', 'Sheet1', 'Sheet 1'],
+    ['account name', 'nama akun', 'balance', 'saldo', 'account type', 'tipe akun']
+  );
+  const txRows = findSheetRows(
+    ['Transactions', 'Transaksi', 'Expenses', 'Pengeluaran', 'Catatan', 'Sheet2', 'Sheet 2'],
+    ['amount', 'jumlah', 'category', 'kategori', 'notes', 'catatan', 'transfer']
+  );
+  const invRows = findSheetRows(
+    ['Investments', 'Investasi', 'Portfolio', 'Assets', 'Portofolio', 'Sheet3', 'Sheet 3'],
+    ['asset name', 'nama aset', 'current value', 'nilai pasar', 'units', 'platform']
+  );
+  const bgtRows = findSheetRows(
+    ['Budgets', 'Anggaran', 'Budget', 'Target', 'Sheet4', 'Sheet 4'],
+    ['monthly limit', 'batas bulanan', 'budget', 'anggaran']
+  );
+
+  // Parse Accounts
+  if (accRows.length > 0) {
+    let startIdx = 0;
+    const firstRowStr = (accRows[0] || []).join(' ').toLowerCase();
+    if (firstRowStr.includes('name') || firstRowStr.includes('nama') || firstRowStr.includes('balance') || firstRowStr.includes('saldo') || firstRowStr.includes('id')) {
+      startIdx = 1;
+    }
+
+    for (let i = startIdx; i < accRows.length; i++) {
       const r = accRows[i];
-      if (!r || !r[0] || !r[1]) continue;
+      if (!r || !Array.isArray(r) || r.length === 0) continue;
+
+      const col0 = String(r[0] || '').trim();
+      const col1 = String(r[1] || '').trim();
+      const col2 = String(r[2] || '').trim();
+
+      if (!col0 && !col1 && !r[3]) continue;
+      if (col0.toLowerCase() === 'id' || col1.toLowerCase() === 'account name' || col1.toLowerCase() === 'nama akun') continue;
+
+      const name = col1 || col0 || `Account ${i}`;
+      const id = col0 && col0.length > 2 ? col0 : `acc_${i}_${Date.now()}`;
+
+      let rawType = (col2 || 'bank').toLowerCase().trim();
+      let type: any = 'bank';
+      if (['cash', 'kas', 'tunai'].includes(rawType)) type = 'cash';
+      else if (['e-wallet', 'ewallet', 'dompet digital', 'gopay', 'ovo', 'dana'].includes(rawType)) type = 'e-wallet';
+      else if (['credit_card', 'kartu kredit', 'cc'].includes(rawType)) type = 'credit_card';
+      else if (['paylater', 'pay later'].includes(rawType)) type = 'paylater';
+      else if (['investment_bank', 'bank investasi'].includes(rawType)) type = 'investment_bank';
+
       accounts.push({
-        id: String(r[0]),
+        id,
         userId,
-        name: String(r[1]),
-        type: (r[2] || 'bank') as any,
-        balance: Number(r[3]) || 0,
-        color: r[4] ? String(r[4]) : '#10b981',
+        name,
+        type,
+        balance: parseNumber(r[3]),
+        color: r[4] ? String(r[4]).trim() : '#10b981',
         createdAt: r[5] ? String(r[5]) : new Date().toISOString(),
         updatedAt: r[5] ? String(r[5]) : new Date().toISOString(),
       });
     }
   }
 
-  // Parse Transactions (Tab 'Transactions')
-  const txRows = sheets.Transactions || [];
-  if (txRows.length > 1) {
-    for (let i = 1; i < txRows.length; i++) {
-      const r = txRows[i];
-      if (!r || !r[0]) continue;
-      // Match account by ID or name
-      const accRef = String(r[5] || '');
-      const matchedAcc = accounts.find((a) => a.id === accRef || a.name === accRef);
-      const accId = matchedAcc ? matchedAcc.id : accRef || (accounts[0]?.id || 'acc_default');
+  // Parse Transactions
+  if (txRows.length > 0) {
+    let startIdx = 0;
+    const firstRowStr = (txRows[0] || []).join(' ').toLowerCase();
+    if (firstRowStr.includes('amount') || firstRowStr.includes('jumlah') || firstRowStr.includes('category') || firstRowStr.includes('kategori') || firstRowStr.includes('id') || firstRowStr.includes('date')) {
+      startIdx = 1;
+    }
 
-      // Match transfer destination if any
-      const toAccRef = r[7] ? String(r[7]) : undefined;
+    for (let i = startIdx; i < txRows.length; i++) {
+      const r = txRows[i];
+      if (!r || !Array.isArray(r) || r.length === 0) continue;
+
+      const col0 = String(r[0] || '').trim();
+      const col1 = String(r[1] || '').trim();
+      const col2 = String(r[2] || '').trim();
+
+      if (!col0 && !col1 && !r[3]) continue;
+      if (col0.toLowerCase() === 'id' || col1.toLowerCase() === 'date' || col2.toLowerCase() === 'type') continue;
+
+      const txId = col0 && col0.length > 2 ? col0 : `tx_${i}_${Date.now()}`;
+      const amount = Math.abs(parseNumber(r[3]));
+      if (amount === 0 && !r[4] && !r[6]) continue;
+
+      const accRef = String(r[5] || '').trim();
+      const matchedAcc = accounts.find((a) => a.id === accRef || a.name === accRef);
+      const accId = matchedAcc ? matchedAcc.id : (accounts[0]?.id || 'acc_default');
+
+      const toAccRef = r[7] ? String(r[7]).trim() : undefined;
       const matchedTo = toAccRef ? accounts.find((a) => a.id === toAccRef || a.name === toAccRef) : undefined;
       const toAccountId = matchedTo ? matchedTo.id : toAccRef;
 
+      let type: 'expense' | 'income' | 'transfer' = 'expense';
+      const rawType = col2.toLowerCase();
+      if (rawType.includes('in') || rawType.includes('pemasukan') || rawType.includes('income')) type = 'income';
+      else if (rawType.includes('tr') || rawType.includes('transfer')) type = 'transfer';
+
       transactions.push({
-        id: String(r[0]),
+        id: txId,
         userId,
-        date: r[1] ? String(r[1]) : new Date().toISOString().split('T')[0],
-        type: (String(r[2] || 'expense').toLowerCase()) as any,
-        amount: Number(r[3]) || 0,
-        category: r[4] ? String(r[4]) : 'General',
+        date: col1 ? col1.split('T')[0] : new Date().toISOString().split('T')[0],
+        type,
+        amount,
+        category: r[4] ? String(r[4]).trim() : 'General',
         accountId: accId,
         toAccountId,
-        notes: r[6] ? String(r[6]) : '',
-        createdAt: r[1] ? String(r[1]) : new Date().toISOString(),
+        notes: r[6] ? String(r[6]).trim() : '',
+        createdAt: col1 || new Date().toISOString(),
       });
     }
   }
 
-  // Parse Investments (Tab 'Investments')
-  const invRows = sheets.Investments || [];
-  if (invRows.length > 1) {
-    for (let i = 1; i < invRows.length; i++) {
+  // Parse Investments
+  if (invRows.length > 0) {
+    let startIdx = 0;
+    const firstRowStr = (invRows[0] || []).join(' ').toLowerCase();
+    if (firstRowStr.includes('asset') || firstRowStr.includes('name') || firstRowStr.includes('category') || firstRowStr.includes('id')) {
+      startIdx = 1;
+    }
+
+    for (let i = startIdx; i < invRows.length; i++) {
       const r = invRows[i];
-      if (!r || !r[0] || !r[1]) continue;
+      if (!r || !Array.isArray(r) || r.length === 0) continue;
+
+      const col0 = String(r[0] || '').trim();
+      const col1 = String(r[1] || '').trim();
+
+      if (!col0 && !col1 && !r[5]) continue;
+      if (col0.toLowerCase() === 'id' || col1.toLowerCase() === 'asset name' || col1.toLowerCase() === 'nama aset') continue;
+
+      const invName = col1 || col0 || `Investment ${i}`;
+      const invId = col0 && col0.length > 2 ? col0 : `inv_${i}_${Date.now()}`;
+
       investments.push({
-        id: String(r[0]),
+        id: invId,
         userId,
-        name: String(r[1]),
-        category: r[2] ? String(r[2]) : 'Other',
-        currency: (r[3] === 'USD' ? 'USD' : 'IDR'),
-        platform: r[4] ? String(r[4]) : 'General',
-        amountInvested: Number(r[5]) || 0,
-        currentValue: Number(r[6]) || 0,
-        units: r[9] ? Number(r[9]) : undefined,
-        customExchangeRate: r[10] ? Number(r[10]) : undefined,
-        notes: r[11] ? String(r[11]) : '',
+        name: invName,
+        category: r[2] ? String(r[2]).trim() : 'Other',
+        currency: (String(r[3]).toUpperCase() === 'USD' ? 'USD' : 'IDR'),
+        platform: r[4] ? String(r[4]).trim() : 'General',
+        amountInvested: parseNumber(r[5]),
+        currentValue: parseNumber(r[6]),
+        units: r[9] ? parseNumber(r[9]) : undefined,
+        customExchangeRate: r[10] ? parseNumber(r[10]) : undefined,
+        notes: r[11] ? String(r[11]).trim() : '',
         createdAt: new Date().toISOString(),
         updatedAt: new Date().toISOString(),
       });
     }
   }
 
-  // Parse Budgets (Tab 'Budgets')
-  const bgtRows = sheets.Budgets || [];
-  if (bgtRows.length > 1) {
-    for (let i = 1; i < bgtRows.length; i++) {
+  // Parse Budgets
+  if (bgtRows.length > 0) {
+    let startIdx = 0;
+    const firstRowStr = (bgtRows[0] || []).join(' ').toLowerCase();
+    if (firstRowStr.includes('category') || firstRowStr.includes('kategori')) {
+      startIdx = 1;
+    }
+
+    for (let i = startIdx; i < bgtRows.length; i++) {
       const r = bgtRows[i];
-      if (!r || !r[0]) continue;
+      if (!r || !Array.isArray(r) || r.length === 0) continue;
+      const cat = String(r[0]).trim();
+      if (!cat || cat.toLowerCase() === 'category' || cat.toLowerCase() === 'kategori') continue;
+
       budgets.push({
-        id: `bgt_${r[0]}`,
+        id: `bgt_${cat}`,
         userId,
-        category: String(r[0]),
-        monthlyLimit: Number(r[1]) || 0,
+        category: cat,
+        monthlyLimit: parseNumber(r[1]),
         month: r[5] ? String(r[5]) : undefined,
         createdAt: new Date().toISOString(),
         updatedAt: new Date().toISOString(),
@@ -429,18 +565,14 @@ export const GOOGLE_APPS_SCRIPT_TEMPLATE = `/**
 
 function readAllTabs(ss) {
   var result = {};
-  var tabNames = ['Summary', 'Accounts', 'Transactions', 'Investments', 'Budgets'];
-  for (var i = 0; i < tabNames.length; i++) {
-    var name = tabNames[i];
-    var sheet = ss.getSheetByName(name);
-    if (sheet) {
-      var lastRow = sheet.getLastRow();
-      var lastCol = sheet.getLastColumn();
-      if (lastRow > 0 && lastCol > 0) {
-        result[name] = sheet.getRange(1, 1, lastRow, lastCol).getValues();
-      } else {
-        result[name] = [];
-      }
+  var sheets = ss.getSheets();
+  for (var i = 0; i < sheets.length; i++) {
+    var sheet = sheets[i];
+    var name = sheet.getName();
+    var lastRow = sheet.getLastRow();
+    var lastCol = sheet.getLastColumn();
+    if (lastRow > 0 && lastCol > 0) {
+      result[name] = sheet.getRange(1, 1, lastRow, lastCol).getValues();
     } else {
       result[name] = [];
     }
