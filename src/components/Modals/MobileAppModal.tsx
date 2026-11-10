@@ -26,7 +26,7 @@ export const MobileAppModal: React.FC<MobileAppModalProps> = ({ isOpen, onClose 
   const [activeTab, setActiveTab] = useState<'pwa' | 'apk'>('pwa');
   const [installSuccess, setInstallSuccess] = useState(false);
 
-  const apkDownloadUrl = 'https://github.com/davinwjy/ExpensesTracker/releases';
+  const apkDownloadUrl = 'https://github.com/davinwjy/Expenses-Tracker-to-Sheets/releases';
 
   if (!isOpen) return null;
 
@@ -237,7 +237,7 @@ export const MobileAppModal: React.FC<MobileAppModalProps> = ({ isOpen, onClose 
                     <div className="pt-1 flex items-center justify-between text-[10px] text-slate-500 dark:text-zinc-500 border-t border-slate-200 dark:border-[#161c28]">
                       <span>GitHub Repository:</span>
                       <a
-                        href="https://github.com/davinwjy/ExpensesTracker/releases"
+                        href="https://github.com/davinwjy/Expenses-Tracker-to-Sheets/releases"
                         target="_blank"
                         rel="noopener noreferrer"
                         className="text-slate-600 dark:text-zinc-400 hover:text-emerald-600 dark:hover:text-emerald-400 underline inline-flex items-center gap-1"

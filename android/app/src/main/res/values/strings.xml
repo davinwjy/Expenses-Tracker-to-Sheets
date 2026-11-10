@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">WealthTrack Pro</string>
+    <string name="title_activity_main">WealthTrack Pro</string>
+    <string name="package_name">com.wealthtrack.app</string>
+    <string name="custom_url_scheme">com.wealthtrack.app</string>
+</resources>

@@ -29,12 +29,40 @@ jobs:
         with:
           node-version: 22
 
-      - name: Build or Use Pre-Built Static Bundle
+      - name: Build Static Site (with Pre-Built Bundle Fallback)
         run: |
+          node -e '
+            const fs = require("fs");
+            const p = JSON.parse(fs.readFileSync("package.json", "utf8"));
+            const pin = {
+              "@capacitor/android": "^7.0.0",
+              "@capacitor/app": "^7.0.0",
+              "@capacitor/core": "^7.0.0",
+              "@capacitor/cli": "^7.0.0",
+              "@google/genai": "latest",
+              "@tailwindcss/vite": "^4.0.0",
+              "@vitejs/plugin-react": "^4.3.0",
+              "tailwindcss": "^4.0.0",
+              "vite": "^6.0.0",
+              "vite-plugin-pwa": "^0.21.0",
+              "firebase": "^11.0.0",
+              "react": "^19.0.0",
+              "react-dom": "^19.0.0",
+              "@types/react": "^19.0.0",
+              "@types/react-dom": "^19.0.0",
+              "typescript": "^5.7.0"
+            };
+            for (const [k, v] of Object.entries(pin)) {
+              if (p.dependencies && p.dependencies[k]) p.dependencies[k] = v;
+              if (p.devDependencies && p.devDependencies[k]) p.devDependencies[k] = v;
+            }
+            fs.writeFileSync("package.json", JSON.stringify(p, null, 2));
+          '
+          rm -f package-lock.json bun.lock
           if npm install --legacy-peer-deps && npm run build; then
-            echo "Built from source into ./dist"
+            echo "Built fresh from source into ./dist"
           else
-            echo "Using pre-built ./docs bundle synced by AI Studio"
+            echo "Using pre-built ./docs bundle from AI Studio"
             rm -rf dist
             cp -r docs dist
           fi

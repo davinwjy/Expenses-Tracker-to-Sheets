@@ -31,17 +31,50 @@ jobs:
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v4
         with:
-          gradle-version: '8.14.3'
+          gradle-version: '8.11.1'
 
-      - name: Install Dependencies & Sync Web Assets
+      - name: Install Dependencies & Build Web Application
         run: |
-          if npm install --legacy-peer-deps && npm run build; then
-            npx cap sync android || cp -r dist/* android/app/src/main/assets/public/
-          else
-            echo "Using pre-built web bundle in docs/ and android/app/src/main/assets/public/"
-            npm install @capacitor/android @capacitor/app @capacitor/core --no-save --legacy-peer-deps
-            cp -r docs/* android/app/src/main/assets/public/ || true
+          node -e '
+            const fs = require("fs");
+            const p = JSON.parse(fs.readFileSync("package.json", "utf8"));
+            const pin = {
+              "@capacitor/android": "^7.0.0",
+              "@capacitor/app": "^7.0.0",
+              "@capacitor/core": "^7.0.0",
+              "@capacitor/cli": "^7.0.0",
+              "@google/genai": "latest",
+              "@tailwindcss/vite": "^4.0.0",
+              "@vitejs/plugin-react": "^4.3.0",
+              "tailwindcss": "^4.0.0",
+              "vite": "^6.0.0",
+              "vite-plugin-pwa": "^0.21.0",
+              "firebase": "^11.0.0",
+              "react": "^19.0.0",
+              "react-dom": "^19.0.0",
+              "@types/react": "^19.0.0",
+              "@types/react-dom": "^19.0.0",
+              "typescript": "^5.7.0"
+            };
+            for (const [k, v] of Object.entries(pin)) {
+              if (p.dependencies && p.dependencies[k]) p.dependencies[k] = v;
+              if (p.devDependencies && p.devDependencies[k]) p.devDependencies[k] = v;
+            }
+            fs.writeFileSync("package.json", JSON.stringify(p, null, 2));
+          '
+          rm -f package-lock.json bun.lock
+          npm install --legacy-peer-deps
+          if ! npm run build; then
+            echo "Fallback to pre-built docs/ bundle"
+            rm -rf dist
+            cp -r docs dist
           fi
+
+      - name: Initialize & Sync Capacitor Android Project
+        run: |
+          rm -rf android
+          npx cap add android
+          npx cap sync android
 
       - name: Build Android Debug APK
         run: |
@@ -70,11 +103,11 @@ jobs:
         with:
           artifacts: "android/app/build/outputs/apk/debug/WealthTrack-Pro.apk"
           tag: "v1.0.0-apk"
-          name: "WealthTrack Pro v1.0.0 (Android APK)"
+          name: "WealthTrack Pro (Android APK - Latest)"
           body: |
             ### 📱 WealthTrack Pro Mobile APK
             - **Package**: `com.wealthtrack.app`
-            - **Fitur**: Sinkronisasi otomatis 100% dengan akun Firebase Cloud
+            - **Fitur**: Sinkronisasi otomatis 100% dengan akun Firebase Cloud & Google Sheets (Summary, Accounts, Transactions, Investments, Budgets)
             - **Cara Install**: Download file `WealthTrack-Pro.apk` di bawah dan pasang di HP Android Anda.
           allowUpdates: true
           draft: false
