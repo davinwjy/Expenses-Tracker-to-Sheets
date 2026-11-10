@@ -20,11 +20,67 @@
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+    
     <script>
-      // Suppress Vite HMR WebSocket errors in AI Studio iframe environment
       (function() {
+        // 1. One-click and automated cache-clearing recovery function
+        window.__wealthtrack_clearcache_and_reload = function() {
+          var reloadNow = function() {
+            var url = new URL(window.location.href);
+            url.searchParams.set('reload', Date.now().toString());
+            window.location.replace(url.toString());
+          };
+
+          var promises = [];
+          if ('serviceWorker' in navigator) {
+            promises.push(
+              navigator.serviceWorker.getRegistrations().then(function(regs) {
+                return Promise.all(regs.map(function(r) { return r.unregister(); }));
+              }).catch(function() {})
+            );
+          }
+          if ('caches' in window) {
+            promises.push(
+              caches.keys().then(function(keys) {
+                return Promise.all(keys.map(function(k) { return caches.delete(k); }));
+              }).catch(function() {})
+            );
+          }
+          try {
+            sessionStorage.clear();
+          } catch(e) {}
+
+          Promise.all(promises).then(reloadNow).catch(reloadNow);
+          setTimeout(reloadNow, 800);
+        };
+
+        // 2. Catch script load errors & stale chunk errors (e.g., 404 on obsolete hashed bundle)
+        window.addEventListener('error', function(event) {
+          if (event && event.target && event.target.tagName === 'SCRIPT') {
+            console.warn('[WealthTrack] Failed to load bundle asset:', event.target.src);
+            var recoveryBox = document.getElementById('wealthtrack-fallback-recovery');
+            if (recoveryBox) recoveryBox.style.display = 'block';
+          }
+          var msg = event.message ? String(event.message) : '';
+          if (msg.includes('Failed to fetch dynamically imported module') || msg.includes('Unexpected token') || msg.includes('Loading chunk')) {
+            console.warn('[WealthTrack] Detected stale chunk error, initiating recovery...');
+            var recoveryBox = document.getElementById('wealthtrack-fallback-recovery');
+            if (recoveryBox) recoveryBox.style.display = 'block';
+          }
+        }, true);
+
+        // 3. Fallback recovery timer: reveal button if app doesn't mount within 3.5s
+        setTimeout(function() {
+          var root = document.getElementById('root');
+          var loader = document.getElementById('wealthtrack-initial-loader');
+          var recoveryBox = document.getElementById('wealthtrack-fallback-recovery');
+          if (loader && root && root.contains(loader) && recoveryBox) {
+            recoveryBox.style.display = 'block';
+          }
+        }, 3500);
+
+        // 4. Suppress Vite HMR WebSocket errors in AI Studio iframe environment
         if (typeof window !== 'undefined') {
-          // 1. Suppress console.error logging from @vite/client
           var _origErr = console.error;
           console.error = function() {
             var msg = arguments[0] ? String(arguments[0]) : '';
@@ -34,7 +90,6 @@
             _origErr.apply(console, arguments);
           };
 
-          // 2. Intercept WebSocket if targeted at Vite HMR
           if (window.WebSocket) {
             var RealWebSocket = window.WebSocket;
             window.WebSocket = function(url, protocols) {
@@ -43,7 +98,7 @@
                            (Array.isArray(protocols) && protocols.includes('vite-hmr'));
               if (isVite) {
                 var dummy = new EventTarget();
-                dummy.readyState = 1; // OPEN
+                dummy.readyState = 1;
                 dummy.bufferedAmount = 0;
                 dummy.extensions = '';
                 dummy.protocol = 'vite-hmr';
@@ -70,7 +125,6 @@
             window.WebSocket.CLOSED = 3;
           }
 
-          // 3. Catch any global error events referencing WebSocket
           window.addEventListener('error', function(event) {
             if (event && (
               (event.message && (event.message.includes('WebSocket') || event.message.includes('[vite]'))) ||
@@ -92,27 +146,35 @@
           }, true);
         }
 
-        // Ensure trailing slash for GitHub Pages repo subdirectories so relative ./assets resolve correctly
+        // 5. Ensure trailing slash for GitHub Pages repo subdirectories so relative ./assets resolve correctly
         if (window.location.pathname.slice(-1) !== '/' && !window.location.pathname.split('/').pop().includes('.')) {
           window.location.replace(window.location.pathname + '/' + window.location.search + window.location.hash);
         }
       })();
     </script>
-    <script type="module" crossorigin src="./assets/index-DcAd4UHG.js"></script>
-    <link rel="stylesheet" crossorigin href="./assets/index-CuDLaP7Y.css">
+    <script type="module" crossorigin src="./assets/index-BFkYArGG.js"></script>
+    <link rel="stylesheet" crossorigin href="./assets/index-C7BOFTHv.css">
   <link rel="manifest" href="./manifest.webmanifest"></head>
   <body class="bg-[#08090c] text-zinc-100 antialiased selection:bg-emerald-500 selection:text-slate-950 min-h-screen">
     <div id="root">
-      <div style="min-height: 100vh; background-color: #020617; display: flex; align-items: center; justify-content: center; color: #94a3b8; font-family: sans-serif;">
-        <div style="text-align: center; padding: 20px;">
-          <div style="width: 48px; height: 48px; background: #10b981; border-radius: 14px; margin: 0 auto 16px; display: flex; align-items: center; justify-content: center;">
-            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#020617" stroke-width="2.5"><path d="M21 12V7H5a2 2 0 0 1 0-4h14v4"/><path d="M3 5v14a2 2 0 0 0 2 2h16v-5"/><path d="M18 12a2 2 0 0 0 0 4h4v-4Z"/></svg>
+      <div id="wealthtrack-initial-loader" style="min-height: 100vh; background-color: #08090c; display: flex; align-items: center; justify-content: center; color: #94a3b8; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; padding: 20px;">
+        <div style="text-align: center; max-width: 380px; width: 100%;">
+          <div style="width: 52px; height: 52px; background: linear-gradient(135deg, #10b981 0%, #059669 100%); border-radius: 16px; margin: 0 auto 16px; display: flex; align-items: center; justify-content: center; box-shadow: 0 10px 25px -5px rgba(16, 185, 129, 0.3);">
+            <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="#08090c" stroke-width="2.5"><path d="M21 12V7H5a2 2 0 0 1 0-4h14v4"/><path d="M3 5v14a2 2 0 0 0 2 2h16v-5"/><path d="M18 12a2 2 0 0 0 0 4h4v-4Z"/></svg>
           </div>
-          <h2 style="color: #ffffff; margin: 0 0 8px; font-size: 18px; font-weight: bold;">Loading WealthTrack Pro...</h2>
-          <p style="margin: 0; font-size: 13px;">Preparing personal finance dashboard</p>
+          <h2 style="color: #ffffff; margin: 0 0 8px; font-size: 19px; font-weight: 700; letter-spacing: -0.01em;">WealthTrack Pro</h2>
+          <p style="margin: 0; font-size: 13px; color: #64748b;">Loading personal finance dashboard...</p>
+
+          <div id="wealthtrack-fallback-recovery" style="display: none; background: #0f172a; border: 1px solid #1e293b; border-radius: 12px; padding: 16px; margin-top: 20px; text-align: center;">
+            <p style="margin: 0 0 12px; font-size: 12px; color: #cbd5e1; line-height: 1.5;">
+              Loading is taking longer than expected. Stale browser or GitHub Pages cache may need a refresh.
+            </p>
+            <button onclick="window.__wealthtrack_clearcache_and_reload()" style="background: #10b981; color: #08090c; border: none; padding: 9px 16px; border-radius: 8px; font-size: 13px; font-weight: 600; cursor: pointer; width: 100%; transition: opacity 0.15s;">
+              ⚡ Clear Cache & Force Refresh
+            </button>
+          </div>
         </div>
       </div>
     </div>
   </body>
 </html>
-

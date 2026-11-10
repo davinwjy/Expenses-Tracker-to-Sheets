@@ -23,36 +23,66 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const isFirebase = isFirebaseActive();
 
   useEffect(() => {
+    let isMounted = true;
+
+    // Safety fallback timer: Ensure app never gets permanently stuck on the loading spinner
+    const fallbackTimer = setTimeout(() => {
+      if (isMounted) {
+        setIsLoading(false);
+      }
+    }, 2500);
+
     // 1. If Firebase is active, listen to Firebase Auth
     if (isFirebase) {
       const unsub = firestoreService.onAuthChanged((fbUser) => {
+        if (!isMounted) return;
+        clearTimeout(fallbackTimer);
         setUser(fbUser);
         setIsLoading(false);
       });
-      return () => unsub();
+      return () => {
+        isMounted = false;
+        clearTimeout(fallbackTimer);
+        unsub();
+      };
     }
 
     // 2. Otherwise use local / server auth token
     async function loadUser() {
       const token = getAuthToken();
       if (!token) {
-        setIsLoading(false);
+        if (isMounted) {
+          clearTimeout(fallbackTimer);
+          setIsLoading(false);
+        }
         return;
       }
 
       try {
         const { user } = await api.getCurrentUser();
-        setUser(user);
+        if (isMounted) {
+          setUser(user);
+        }
       } catch (err) {
         console.warn('Session expired or invalid token:', err);
         removeAuthToken();
-        setUser(null);
+        if (isMounted) {
+          setUser(null);
+        }
       } finally {
-        setIsLoading(false);
+        if (isMounted) {
+          clearTimeout(fallbackTimer);
+          setIsLoading(false);
+        }
       }
     }
 
     loadUser();
+
+    return () => {
+      isMounted = false;
+      clearTimeout(fallbackTimer);
+    };
   }, [isFirebase]);
 
   const login = async (email: string, password: string) => {

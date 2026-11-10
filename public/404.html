@@ -6,11 +6,17 @@
     <title>WealthTrack Pro - Expense & Portfolio Manager</title>
     <script>
       // Single Page App redirect for GitHub Pages
-      sessionStorage.redirect = location.href;
+      // Only redirect for actual page navigations, NOT for missing assets like .js, .css, .png, etc.
+      var path = window.location.pathname;
+      var isAsset = /\.(js|css|json|png|jpg|jpeg|svg|ico|woff|woff2|map)$/i.test(path);
+      if (!isAsset) {
+        sessionStorage.redirect = location.href;
+        window.location.replace('./');
+      }
     </script>
     <meta http-equiv="refresh" content="0;URL='./'">
   </head>
-  <body style="background-color: #020617; color: #f8fafc; font-family: sans-serif; display: flex; align-items: center; justify-content: center; height: 100vh; margin: 0;">
+  <body style="background-color: #08090c; color: #f8fafc; font-family: sans-serif; display: flex; align-items: center; justify-content: center; height: 100vh; margin: 0;">
     <p>Redirecting to WealthTrack Pro...</p>
   </body>
 </html>

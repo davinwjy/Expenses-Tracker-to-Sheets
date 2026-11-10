@@ -27,3 +27,15 @@ Ensure that when logged into `davinwijaya16@gmail.com`, financial data is fetche
 
 - **Sheet ID Storage**: `localStorage.getItem(`wealthtrack_sheets_id_${user.email}`)` or user profile document in Firebase.
 - **Sync Routine**: Whenever data mutations occur in `FinanceContext`, the sync service uses the active user's email to resolve the correct spreadsheet ID before pushing updates via Google Sheets API.
+
+
+---
+
+## 3. GitHub Pages Loading Issue Resolution
+
+- **Cause**: Outdated bundle hash references between `docs/index.html` and emitted asset chunks, compounded by stale Service Worker / HTTP caches on GitHub Pages.
+- **Resolution**:
+  1. Replaced the premature Vite plugin with `node scripts/sync-build.js` in `package.json` to guarantee all assets and `.nojekyll` are copied cleanly after Vite finishes.
+  2. Integrated an automated cache-clearing script and a timeout fallback ("⚡ Clear Cache & Force Refresh") into `index.html`.
+  3. Added a 2.5-second safety timer in `AuthContext.tsx` so authentication loading never freezes indefinitely.
+  4. Verified full compilation and type-checking with `compile_applet` and `lint_applet`.
