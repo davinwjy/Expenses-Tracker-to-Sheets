@@ -18,14 +18,12 @@ import { api } from '../lib/api';
 import { localDb, DEFAULT_HOLDING_TYPES } from '../lib/localDb';
 import { useAuth } from './AuthContext';
 import { isFirebaseActive, syncFirestoreOnline } from '../lib/firebase';
-import { firestoreService } from '../lib/firestoreService';
 import { computeStats } from '../lib/statsHelper';
 import { exchangeRateService } from '../lib/exchangeRateService';
-import { offlineSyncManager } from '../lib/offlineSync';
+import { offlineSyncManager, FinancialSnapshot } from '../lib/offlineSync';
 import {
-  getCachedGoogleSheetsToken,
-  syncFinancialDataToSheet,
   syncFinancialDataViaWebhook,
+  fetchFinancialDataFromWebhook,
   getStoredSheetConfig,
   saveStoredSheetConfig,
 } from '../lib/googleSheetsSync';
@@ -184,6 +182,7 @@ interface FinanceContextType {
   setPayBillCard: (a: Account | null) => void;
   isGoogleSheetsModalOpen: boolean;
   setIsGoogleSheetsModalOpen: (v: boolean) => void;
+  pullFromGoogleSheet: (opts?: { silent?: boolean }) => Promise<boolean>;
   saveGoogleSheetSettings: (cfg: {
     spreadsheetId?: string;
     webhookUrl?: string;
@@ -247,6 +246,7 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
   const [isOnline, setIsOnline] = useState<boolean>(() => (typeof navigator !== 'undefined' ? navigator.onLine : true));
   const [isSyncing, setIsSyncing] = useState<boolean>(false);
   const [pendingSyncCount, setPendingSyncCount] = useState<number>(() => offlineSyncManager.getPendingQueue().length);
+  const lastSheetPayloadHashRef = useRef<string>('');
 
   const [announcement, setAnnouncement] = useState<SystemAnnouncement | null>(null);
   const [activeTab, setActiveTabState] = useState<'dashboard' | 'expenses' | 'accounts' | 'investments' | 'budgeting' | 'stats' | 'admin'>('dashboard');
@@ -326,14 +326,13 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
       localStorage.setItem('wealthtrack_theme', newTheme);
     } catch {}
     applyTheme(newTheme);
-    if (user) {
-      if (isFirebase && settings) {
-        firestoreService.saveSettings({ ...settings, theme: newTheme });
-      } else {
-        api.updateSettings({ theme: newTheme }).catch(() => {});
-      }
+    if (user?.email) {
+      offlineSyncManager.saveSnapshot(
+        { settings: { ...(settings || { userId: user.id, usdIdrRate: 15850, privacyModeDefault: false }), theme: newTheme } },
+        user.email
+      );
     }
-  }, [applyTheme, user, isFirebase, settings]);
+  }, [applyTheme, user, settings]);
 
   const toggleTheme = useCallback(() => {
     setTheme(theme === 'dark' ? 'light' : 'dark');
@@ -387,6 +386,33 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
     }, duration);
     return () => clearTimeout(timer);
   }, [notification]);
+
+  // Ref trackers to avoid stale closures and infinite re-render loops in callbacks
+  const userRef = useRef(user);
+  useEffect(() => { userRef.current = user; }, [user]);
+
+  const settingsRef = useRef(settings);
+  useEffect(() => { settingsRef.current = settings; }, [settings]);
+
+  const usdIdrRateRef = useRef(usdIdrRate);
+  useEffect(() => { usdIdrRateRef.current = usdIdrRate; }, [usdIdrRate]);
+
+  const accountsRef = useRef(accounts);
+  useEffect(() => { accountsRef.current = accounts; }, [accounts]);
+
+  const transactionsRef = useRef(transactions);
+  useEffect(() => { transactionsRef.current = transactions; }, [transactions]);
+
+  const investmentsRef = useRef(investments);
+  useEffect(() => { investmentsRef.current = investments; }, [investments]);
+
+  const budgetsRef = useRef(budgets);
+  useEffect(() => { budgetsRef.current = budgets; }, [budgets]);
+
+  const statsRef = useRef(stats);
+  useEffect(() => { statsRef.current = stats; }, [stats]);
+
+  const initialPulledUserRef = useRef<string | null>(null);
 
   // Ref trackers to guarantee zero stale closure issues in hardware/gesture back handlers
   const isMobileQuickMenuOpenRef = useRef(false);
@@ -563,62 +589,190 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
     });
   };
 
-  // 1. FIREBASE REALTIME SUBSCRIPTION
+  // 1. PULL FINANCIAL DATA FROM GOOGLE SHEETS
+  const pullFromGoogleSheet = useCallback(
+    async (opts?: { silent?: boolean }): Promise<boolean> => {
+      const currentUser = userRef.current;
+      if (!currentUser?.email) return false;
+      const sheetCfg = getStoredSheetConfig(currentUser.email, settingsRef.current);
+      if (!sheetCfg.webhookUrl || !sheetCfg.webhookUrl.startsWith('https://')) {
+        if (!opts?.silent) {
+          showNotification({
+            title: 'Google Sheet Belum Terhubung',
+            message: 'Harap masukkan Webhook URL Google Apps Script di menu Integrasi Google Sheets.',
+            type: 'warning',
+          });
+        }
+        return false;
+      }
+
+      setIsSyncing(true);
+      try {
+        const result = await fetchFinancialDataFromWebhook(sheetCfg.webhookUrl, currentUser.id || currentUser.email);
+        const { accounts: fetchedAccs, transactions: fetchedTxs, investments: fetchedInvs, budgets: fetchedBudgets } =
+          result;
+
+        // Auto-seed if sheet is fresh/empty but we have existing local data
+        const currentAccs = accountsRef.current;
+        const currentTxs = transactionsRef.current;
+        const currentInvs = investmentsRef.current;
+        const currentBudgets = budgetsRef.current;
+        const currentStats = statsRef.current;
+        const currentRate = usdIdrRateRef.current;
+
+        if (
+          fetchedAccs.length === 0 &&
+          fetchedTxs.length === 0 &&
+          fetchedInvs.length === 0 &&
+          (currentAccs.length > 0 || currentTxs.length > 0 || currentInvs.length > 0)
+        ) {
+          console.log('Google Sheet is empty. Seeding local snapshot to sheet...');
+          await syncFinancialDataViaWebhook(sheetCfg.webhookUrl, {
+            userEmail: currentUser.email,
+            usdIdrRate: currentRate,
+            stats: currentStats,
+            accounts: currentAccs,
+            transactions: currentTxs,
+            investments: currentInvs,
+            budgets: currentBudgets,
+          }).catch((e) => console.warn('Auto-seed to Google Sheet failed:', e));
+
+          if (!opts?.silent) {
+            showNotification({
+              title: 'Data Lokal Disinkron ke Google Sheets',
+              message: 'Google Sheet kosong telah diisi dengan data portofolio lokal Anda.',
+              type: 'success',
+            });
+          }
+          return true;
+        }
+
+        const normalizedInvestments: Investment[] = fetchedInvs.map((inv: Investment) =>
+          inv.category === 'Bitcoin' && inv.currency !== 'IDR'
+            ? { ...inv, currency: 'IDR' as const }
+            : inv
+        );
+
+        setAccounts(fetchedAccs);
+        setTransactions(fetchedTxs);
+        setInvestments(normalizedInvestments);
+        if (fetchedBudgets && fetchedBudgets.length > 0) {
+          setBudgets(fetchedBudgets);
+        }
+
+        const nextStats = computeStats(fetchedAccs, fetchedTxs, normalizedInvestments, currentRate);
+        setStats(nextStats);
+
+        offlineSyncManager.saveSnapshot(
+          {
+            accounts: fetchedAccs,
+            transactions: fetchedTxs,
+            investments: normalizedInvestments,
+            budgets: fetchedBudgets,
+            stats: nextStats,
+            usdIdrRate: currentRate,
+          },
+          currentUser.email
+        );
+
+        const nowStr = new Date().toLocaleString();
+        saveStoredSheetConfig(currentUser.email, {
+          lastSynced: nowStr,
+        });
+
+        // Update signature so auto-sync doesn't immediately post back the exact data we just pulled
+        const signature = JSON.stringify({
+          u: currentUser.email,
+          a: fetchedAccs.map((x: Account) => [x.id, x.name, x.balance, x.updatedAt]),
+          t: fetchedTxs.map((x: Transaction) => [x.id, x.amount, x.date, x.category, x.notes]),
+          i: normalizedInvestments.map((x: Investment) => [x.id, x.amountInvested, x.currentValue, x.units, x.updatedAt]),
+          b: (fetchedBudgets || []).map((x: CategoryBudget) => [x.id, x.category, x.monthlyLimit, x.month]),
+        });
+        lastSheetPayloadHashRef.current = signature;
+
+        if (!opts?.silent) {
+          showNotification({
+            title: 'Data Google Sheets Berhasil Dimuat',
+            message: `${fetchedAccs.length} Akun, ${fetchedTxs.length} Transaksi, dan ${normalizedInvestments.length} Investasi berhasil disinkronkan.`,
+            type: 'success',
+          });
+        }
+        return true;
+      } catch (err: any) {
+        console.error('Pull from Google Sheet error:', err);
+        if (!opts?.silent) {
+          showNotification({
+            title: 'Gagal Menarik Data',
+            message: err.message || 'Periksa koneksi internet atau Webhook URL Apps Script Anda.',
+            type: 'error',
+          });
+        }
+        return false;
+      } finally {
+        setIsSyncing(false);
+      }
+    },
+    [showNotification]
+  );
+
+  // 2. USER AUTHENTICATION & DATA HYDRATION
+  // Firebase handles login/identity. Google Sheets + local snapshot handles all financial records.
   useEffect(() => {
-    if (!isFirebase || !user) return;
-    setIsLoading(true);
-
-    const unsubscribe = firestoreService.subscribeToUserData(user.id, (data) => {
-      // Normalize Bitcoin currency to IDR
-      const normalizedInvestments = data.investments.map((inv) =>
-        inv.category === 'Bitcoin' && inv.currency !== 'IDR'
-          ? { ...inv, currency: 'IDR' as const }
-          : inv
-      );
-
-      setAccounts(data.accounts);
-      setTransactions(data.transactions);
-      setInvestments(normalizedInvestments);
-      if (data.budgets && data.budgets.length > 0) {
-        setBudgets(data.budgets);
+    if (isAuthenticated && user?.email) {
+      setIsLoading(true);
+      // Load user-specific cached snapshot for instant 0ms access
+      const userSnapshot = offlineSyncManager.getSnapshot(user.email);
+      if (userSnapshot) {
+        const normalizedInvs = (userSnapshot.investments || []).map((inv) =>
+          inv.category === 'Bitcoin' && inv.currency !== 'IDR'
+            ? { ...inv, currency: 'IDR' as const }
+            : inv
+        );
+        setAccounts(userSnapshot.accounts || []);
+        setTransactions(userSnapshot.transactions || []);
+        setInvestments(normalizedInvs);
+        setBudgets(userSnapshot.budgets || []);
+        setSettings(userSnapshot.settings || null);
+        const rate = userSnapshot.usdIdrRate || 15850;
+        setUsdIdrRate(rate);
+        if (userSnapshot.rateSource) setRateSource(userSnapshot.rateSource);
+        if (userSnapshot.rateLastUpdated) setRateLastUpdated(userSnapshot.rateLastUpdated);
+        const computed =
+          userSnapshot.stats ||
+          computeStats(userSnapshot.accounts || [], userSnapshot.transactions || [], normalizedInvs, rate);
+        setStats(computed);
       }
-      setSettings(data.settings);
-      const rate = data.settings?.usdIdrRate || 15850;
-      setUsdIdrRate(rate);
-      if (data.settings?.rateSource) setRateSource(data.settings.rateSource);
-      if (data.settings?.rateLastUpdated) setRateLastUpdated(data.settings.rateLastUpdated);
-      if (data.settings?.autoUpdateRate !== undefined) {
-        setIsRateAutoUpdateState(data.settings.autoUpdateRate);
-        exchangeRateService.setAutoUpdateEnabled(data.settings.autoUpdateRate);
-      }
-
-      const computed = computeStats(data.accounts, data.transactions, normalizedInvestments, rate);
-      setStats(computed);
       setIsLoading(false);
 
-      // Persist snapshot to local cache for instant offline dashboard access
-      offlineSyncManager.saveSnapshot({
-        accounts: data.accounts,
-        transactions: data.transactions,
-        investments: normalizedInvestments,
-        budgets: data.budgets && data.budgets.length > 0 ? data.budgets : undefined,
-        settings: data.settings,
-        usdIdrRate: rate,
-        rateSource: data.settings?.rateSource,
-        rateLastUpdated: data.settings?.rateLastUpdated,
-        stats: computed,
-      });
-    });
+      // Auto-pull fresh data from Google Sheet if connected (runs once per user login session)
+      if (initialPulledUserRef.current !== user.email) {
+        initialPulledUserRef.current = user.email;
+        const sheetCfg = getStoredSheetConfig(user.email);
+        if (sheetCfg.webhookUrl && sheetCfg.webhookUrl.startsWith('https://')) {
+          pullFromGoogleSheet({ silent: true }).catch(() => {});
+        }
+      }
+    } else if (!isAuthenticated) {
+      initialPulledUserRef.current = null;
+      setAccounts([]);
+      setTransactions([]);
+      setInvestments([]);
+      setBudgets([]);
+      setStats(null);
+    }
+  }, [isAuthenticated, user?.email, pullFromGoogleSheet]);
 
-    return () => unsubscribe();
-  }, [isFirebase, user]);
-
-  // 2. STANDARD SERVER / LOCAL REFRESH (when not Firebase)
+  // Standard Server / Local Refresh fallback
   const refreshData = useCallback(async () => {
     if (!isAuthenticated) return;
-    if (isFirebase) return; // Handled by realtime onSnapshot
-
-    setIsLoading(true);
+    const currentUser = userRef.current;
+    if (currentUser?.email) {
+      const sheetCfg = getStoredSheetConfig(currentUser.email);
+      if (sheetCfg.webhookUrl && sheetCfg.webhookUrl.startsWith('https://')) {
+        await pullFromGoogleSheet({ silent: true });
+        return;
+      }
+    }
     try {
       const [accRes, txRes, invRes, statsRes, setRes, htRes, bgtRes] = await Promise.all([
         api.getAccounts(),
@@ -652,39 +806,26 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
       }
       if (setRes.settings?.rateSource) setRateSource(setRes.settings.rateSource);
       if (setRes.settings?.rateLastUpdated) setRateLastUpdated(setRes.settings.rateLastUpdated);
-      if (setRes.settings?.autoUpdateRate !== undefined) {
-        setIsRateAutoUpdateState(setRes.settings.autoUpdateRate);
-        exchangeRateService.setAutoUpdateEnabled(setRes.settings.autoUpdateRate);
-      }
 
-      // Persist snapshot to local cache
-      offlineSyncManager.saveSnapshot({
-        accounts: accRes.accounts,
-        transactions: txRes.transactions,
-        investments: normalizedInvestments,
-        budgets: bgtRes?.budgets,
-        holdingTypes: htRes?.holdingTypes,
-        stats: statsRes,
-        settings: setRes.settings,
-        usdIdrRate: setRes.settings?.usdIdrRate,
-      });
+      if (currentUser?.email) {
+        offlineSyncManager.saveSnapshot(
+          {
+            accounts: accRes.accounts,
+            transactions: txRes.transactions,
+            investments: normalizedInvestments,
+            budgets: bgtRes?.budgets,
+            holdingTypes: htRes?.holdingTypes,
+            stats: statsRes,
+            settings: setRes.settings,
+            usdIdrRate: setRes.settings?.usdIdrRate,
+          },
+          currentUser.email
+        );
+      }
     } catch (err) {
       console.error('Failed to load finance data:', err);
-    } finally {
-      setIsLoading(false);
     }
-  }, [isAuthenticated, isFirebase]);
-
-  useEffect(() => {
-    if (isAuthenticated && !isFirebase) {
-      refreshData();
-    } else if (!isAuthenticated) {
-      setAccounts([]);
-      setTransactions([]);
-      setInvestments([]);
-      setStats(null);
-    }
-  }, [isAuthenticated, isFirebase, refreshData]);
+  }, [isAuthenticated, pullFromGoogleSheet]);
 
   // ---------------- OPERATIONS ----------------
 
@@ -719,29 +860,26 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
       ...(data.last4Digits?.trim() ? { last4Digits: data.last4Digits.trim() } : {}),
     };
 
-    setAccounts((prev) => {
-      const next = [...prev, newAccount];
-      offlineSyncManager.saveSnapshot({ accounts: next });
-      return next;
-    });
+    const nextAccs = [...accounts, newAccount];
+    setAccounts(nextAccs);
+    const nextStats = computeStats(nextAccs, transactions, investments, usdIdrRate);
+    setStats(nextStats);
 
-    if (!isOnline) {
-      offlineSyncManager.queueItem({
-        id: newAccount.id,
-        type: 'account',
-        action: 'create',
-        data: newAccount,
-      });
-      return;
+    offlineSyncManager.saveSnapshot(
+      {
+        accounts: nextAccs,
+        transactions,
+        investments,
+        budgets,
+        stats: nextStats,
+        usdIdrRate,
+      },
+      user?.email
+    );
+
+    if (!isFirebase) {
+      api.createAccount(data).catch(() => {});
     }
-
-    if (isFirebase && user) {
-      await firestoreService.saveAccount(newAccount);
-      return;
-    }
-
-    await api.createAccount(data);
-    await refreshData();
   };
 
   const updateAccount = async (id: string, data: Partial<Account>) => {
@@ -752,56 +890,50 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
         ...data,
         updatedAt: new Date().toISOString(),
       };
-      setAccounts((prev) => {
-        const next = prev.map((a) => (a.id === id ? updated : a));
-        offlineSyncManager.saveSnapshot({ accounts: next });
-        return next;
-      });
+      const nextAccs = accounts.map((a) => (a.id === id ? updated : a));
+      setAccounts(nextAccs);
+      const nextStats = computeStats(nextAccs, transactions, investments, usdIdrRate);
+      setStats(nextStats);
 
-      if (!isOnline) {
-        offlineSyncManager.queueItem({
-          id,
-          type: 'account',
-          action: 'update',
-          data: updated,
-        });
-        return;
+      offlineSyncManager.saveSnapshot(
+        {
+          accounts: nextAccs,
+          transactions,
+          investments,
+          budgets,
+          stats: nextStats,
+          usdIdrRate,
+        },
+        user?.email
+      );
+
+      if (!isFirebase) {
+        api.updateAccount(id, data).catch(() => {});
       }
-
-      if (isFirebase && user) {
-        await firestoreService.saveAccount(updated);
-        return;
-      }
-
-      await api.updateAccount(id, data);
-      await refreshData();
     }
   };
 
   const deleteAccount = async (id: string) => {
-    setAccounts((prev) => {
-      const next = prev.filter((a) => a.id !== id);
-      offlineSyncManager.saveSnapshot({ accounts: next });
-      return next;
-    });
+    const nextAccs = accounts.filter((a) => a.id !== id);
+    setAccounts(nextAccs);
+    const nextStats = computeStats(nextAccs, transactions, investments, usdIdrRate);
+    setStats(nextStats);
 
-    if (!isOnline) {
-      offlineSyncManager.queueItem({
-        id,
-        type: 'account',
-        action: 'delete',
-        data: { id },
-      });
-      return;
+    offlineSyncManager.saveSnapshot(
+      {
+        accounts: nextAccs,
+        transactions,
+        investments,
+        budgets,
+        stats: nextStats,
+        usdIdrRate,
+      },
+      user?.email
+    );
+
+    if (!isFirebase) {
+      api.deleteAccount(id).catch(() => {});
     }
-
-    if (isFirebase) {
-      await firestoreService.deleteAccount(id);
-      return;
-    }
-
-    await api.deleteAccount(id);
-    await refreshData();
   };
 
   // Transactions
@@ -871,42 +1003,21 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
     setStats(nextStats);
 
     // Save to snapshot immediately for instant offline dashboard access
-    offlineSyncManager.saveSnapshot({
-      accounts: updatedAccounts,
-      transactions: nextTxs,
-      investments,
-      stats: nextStats,
-    });
+    offlineSyncManager.saveSnapshot(
+      {
+        accounts: updatedAccounts,
+        transactions: nextTxs,
+        investments,
+        budgets,
+        stats: nextStats,
+        usdIdrRate,
+      },
+      user?.email
+    );
 
-    if (!isOnline) {
-      offlineSyncManager.queueItem({
-        id: newTx.id,
-        type: 'transaction',
-        action: 'create',
-        data: newTx,
-      });
-      if (updatedAcc) {
-        offlineSyncManager.queueItem({
-          id: updatedAcc.id,
-          type: 'account',
-          action: 'update',
-          data: updatedAcc,
-        });
-      }
-      return;
+    if (!isFirebase) {
+      api.createTransaction(data).catch(() => {});
     }
-
-    if (isFirebase && user) {
-      const promises: Promise<any>[] = [firestoreService.saveTransaction(newTx)];
-      if (updatedAcc) {
-        promises.push(firestoreService.saveAccount(updatedAcc));
-      }
-      await Promise.all(promises);
-      return;
-    }
-
-    await api.createTransaction(data);
-    await refreshData();
   };
 
   const payCreditCardBill = async (data: {
@@ -917,62 +1028,81 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
     date?: string;
     notes?: string;
   }) => {
-    if (isFirebase && user) {
-      const sourceAcc = accounts.find((a) => a.id === data.sourceAccountId);
-      const ccAcc = accounts.find((a) => a.id === data.creditCardAccountId);
-      if (!sourceAcc || !ccAcc) throw new Error('Accounts not found');
+    const sourceAcc = accounts.find((a) => a.id === data.sourceAccountId);
+    const ccAcc = accounts.find((a) => a.id === data.creditCardAccountId);
+    if (!sourceAcc || !ccAcc) throw new Error('Accounts not found');
 
-      const amount = Math.abs(Number(data.amountIdr));
-      const adminFee = Math.abs(Number(data.adminFee || 0));
-      const totalDeduction = amount + adminFee;
-      const now = new Date().toISOString();
-      const txId = 'tx_cc_' + Date.now();
-      const txDate = data.date || now.split('T')[0];
+    const amount = Math.abs(Number(data.amountIdr));
+    const adminFee = Math.abs(Number(data.adminFee || 0));
+    const totalDeduction = amount + adminFee;
+    const now = new Date().toISOString();
+    const txId = 'tx_cc_' + Date.now();
+    const txDate = data.date || now.split('T')[0];
 
-      await firestoreService.saveAccount({
-        ...sourceAcc,
-        balance: sourceAcc.balance - totalDeduction,
-        updatedAt: now,
-      });
-      await firestoreService.saveAccount({
-        ...ccAcc,
-        balance: Math.max(0, ccAcc.balance - amount),
-        updatedAt: now,
-      });
+    const updatedSource = {
+      ...sourceAcc,
+      balance: sourceAcc.balance - totalDeduction,
+      updatedAt: now,
+    };
+    const updatedCc = {
+      ...ccAcc,
+      balance: Math.max(0, ccAcc.balance - amount),
+      updatedAt: now,
+    };
 
-      const tx: Transaction = {
-        id: txId,
-        userId: user.id,
-        type: 'transfer',
-        amount,
+    const updatedAccounts = accounts.map((a) =>
+      a.id === updatedSource.id ? updatedSource : a.id === updatedCc.id ? updatedCc : a
+    );
+
+    const tx: Transaction = {
+      id: txId,
+      userId: user?.id || 'usr_local',
+      type: 'transfer',
+      amount,
+      accountId: data.sourceAccountId,
+      toAccountId: data.creditCardAccountId,
+      category: `Credit Card Payment (${ccAcc.name})`,
+      date: txDate,
+      notes: data.notes || `Paid credit card bill for ${ccAcc.name} from ${sourceAcc.name}${adminFee > 0 ? ` (Admin Fee: Rp ${adminFee.toLocaleString()})` : ''}`,
+      createdAt: now,
+    };
+
+    const createdTxs = [tx];
+    if (adminFee > 0) {
+      createdTxs.push({
+        id: 'tx_fee_' + Date.now(),
+        userId: user?.id || 'usr_local',
+        type: 'expense',
+        amount: adminFee,
         accountId: data.sourceAccountId,
-        toAccountId: data.creditCardAccountId,
-        category: `Credit Card Payment (${ccAcc.name})`,
+        category: 'Admin / Settlement Fee',
         date: txDate,
-        notes: data.notes || `Paid credit card bill for ${ccAcc.name} from ${sourceAcc.name}${adminFee > 0 ? ` (Admin Fee: Rp ${adminFee.toLocaleString()})` : ''}`,
+        notes: `Admin settlement fee for ${ccAcc.name} bill payment`,
         createdAt: now,
-      };
-      await firestoreService.saveTransaction(tx);
-
-      if (adminFee > 0) {
-        const feeTx: Transaction = {
-          id: 'tx_fee_' + Date.now(),
-          userId: user.id,
-          type: 'expense',
-          amount: adminFee,
-          accountId: data.sourceAccountId,
-          category: 'Admin / Settlement Fee',
-          date: txDate,
-          notes: `Admin settlement fee for ${ccAcc.name} bill payment`,
-          createdAt: now,
-        };
-        await firestoreService.saveTransaction(feeTx);
-      }
-      return;
+      });
     }
 
-    await api.payCreditCardBill(data);
-    await refreshData();
+    const nextTxs = [...createdTxs, ...transactions];
+    setAccounts(updatedAccounts);
+    setTransactions(nextTxs);
+    const nextStats = computeStats(updatedAccounts, nextTxs, investments, usdIdrRate);
+    setStats(nextStats);
+
+    offlineSyncManager.saveSnapshot(
+      {
+        accounts: updatedAccounts,
+        transactions: nextTxs,
+        investments,
+        budgets,
+        stats: nextStats,
+        usdIdrRate,
+      },
+      user?.email
+    );
+
+    if (!isFirebase) {
+      api.payCreditCardBill(data).catch(() => {});
+    }
   };
 
   const updateTransaction = async (id: string, data: Partial<Transaction>) => {
@@ -1051,14 +1181,23 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
       const nextTxs = transactions.map((t) => (t.id === id ? updatedTx : t));
       setAccounts(updatedAccounts);
       setTransactions(nextTxs);
-      setStats(computeStats(updatedAccounts, nextTxs, investments, usdIdrRate));
+      const nextStats = computeStats(updatedAccounts, nextTxs, investments, usdIdrRate);
+      setStats(nextStats);
 
-      if (isFirebase && user) {
-        await Promise.all([
-          firestoreService.saveTransaction(updatedTx),
-          firestoreService.saveAccount(modAcc),
-        ]);
-        return;
+      offlineSyncManager.saveSnapshot(
+        {
+          accounts: updatedAccounts,
+          transactions: nextTxs,
+          investments,
+          budgets,
+          stats: nextStats,
+          usdIdrRate,
+        },
+        user?.email
+      );
+
+      if (!isFirebase) {
+        api.updateTransaction(id, data).catch(() => {});
       }
     } else {
       // Account was changed to a different one
@@ -1072,7 +1211,7 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
           else if (oldTx.type === 'income') bal += oldTx.amount;
         } else {
           if (oldTx.type === 'expense') bal += oldTx.amount;
-          else if (oldTx.type === 'income') bal -= oldTx.amount;
+          else if (oldTx.type === 'income') bal += oldTx.amount;
         }
         modOldAcc.balance = bal;
         modOldAcc.updatedAt = now;
@@ -1102,19 +1241,25 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
       const nextTxs = transactions.map((t) => (t.id === id ? updatedTx : t));
       setAccounts(updatedAccounts);
       setTransactions(nextTxs);
-      setStats(computeStats(updatedAccounts, nextTxs, investments, usdIdrRate));
+      const nextStats = computeStats(updatedAccounts, nextTxs, investments, usdIdrRate);
+      setStats(nextStats);
 
-      if (isFirebase && user) {
-        const promises: Promise<any>[] = [firestoreService.saveTransaction(updatedTx)];
-        if (modOldAcc) promises.push(firestoreService.saveAccount(modOldAcc));
-        if (modNewAcc) promises.push(firestoreService.saveAccount(modNewAcc));
-        await Promise.all(promises);
-        return;
+      offlineSyncManager.saveSnapshot(
+        {
+          accounts: updatedAccounts,
+          transactions: nextTxs,
+          investments,
+          budgets,
+          stats: nextStats,
+          usdIdrRate,
+        },
+        user?.email
+      );
+
+      if (!isFirebase) {
+        api.updateTransaction(id, data).catch(() => {});
       }
     }
-
-    await api.updateTransaction(id, data);
-    await refreshData();
   };
 
   const deleteTransaction = async (id: string) => {
@@ -1147,42 +1292,21 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
     const nextStats = computeStats(updatedAccounts, nextTxs, investments, usdIdrRate);
     setStats(nextStats);
 
-    offlineSyncManager.saveSnapshot({
-      accounts: updatedAccounts,
-      transactions: nextTxs,
-      investments,
-      stats: nextStats,
-    });
+    offlineSyncManager.saveSnapshot(
+      {
+        accounts: updatedAccounts,
+        transactions: nextTxs,
+        investments,
+        budgets,
+        stats: nextStats,
+        usdIdrRate,
+      },
+      user?.email
+    );
 
-    if (!isOnline) {
-      offlineSyncManager.queueItem({
-        id,
-        type: 'transaction',
-        action: 'delete',
-        data: { id },
-      });
-      if (modAcc) {
-        offlineSyncManager.queueItem({
-          id: modAcc.id,
-          type: 'account',
-          action: 'update',
-          data: modAcc,
-        });
-      }
-      return;
+    if (!isFirebase) {
+      api.deleteTransaction(id).catch(() => {});
     }
-
-    if (isFirebase && user) {
-      const promises: Promise<any>[] = [firestoreService.deleteTransaction(id)];
-      if (modAcc) {
-        promises.push(firestoreService.saveAccount(modAcc));
-      }
-      await Promise.all(promises);
-      return;
-    }
-
-    await api.deleteTransaction(id);
-    await refreshData();
   };
 
   // Transfers
@@ -1205,196 +1329,183 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
     date?: string;
     notes?: string;
   }) => {
-    if (isFirebase && user) {
-      const now = new Date().toISOString();
-      const txId = 'tx_' + Date.now();
+    const now = new Date().toISOString();
+    const txId = 'tx_' + Date.now();
 
-      if (data.type === 'account_to_account' && data.toAccountId) {
-        const fromAcc = accounts.find((a) => a.id === data.fromAccountId);
-        const toAcc = accounts.find((a) => a.id === data.toAccountId);
-        if (fromAcc && toAcc) {
-          await firestoreService.saveAccount({
-            ...fromAcc,
-            balance: fromAcc.balance - data.amountIdr,
-            updatedAt: now,
-          });
-          await firestoreService.saveAccount({
-            ...toAcc,
-            balance: toAcc.balance + data.amountIdr,
-            updatedAt: now,
-          });
-          const tx: Transaction = {
-            id: txId,
-            userId: user.id,
-            type: 'transfer',
-            amount: data.amountIdr,
-            accountId: data.fromAccountId,
-            toAccountId: data.toAccountId,
-            category: `Transfer to ${toAcc.name}`,
-            date: data.date || now.split('T')[0],
-            notes: data.notes,
-            createdAt: now,
-          };
-          await firestoreService.saveTransaction(tx);
-        }
-      } else if (data.type === 'bank_to_investment') {
-        const fromAcc = accounts.find((a) => a.id === data.fromAccountId);
-        if (!fromAcc) throw new Error('Source account not found');
+    if (data.type === 'account_to_account' && data.toAccountId) {
+      const fromAcc = accounts.find((a) => a.id === data.fromAccountId);
+      const toAcc = accounts.find((a) => a.id === data.toAccountId);
+      if (fromAcc && toAcc) {
+        const updatedFrom = {
+          ...fromAcc,
+          balance: fromAcc.balance - data.amountIdr,
+          updatedAt: now,
+        };
+        const updatedTo = {
+          ...toAcc,
+          balance: toAcc.balance + data.amountIdr,
+          updatedAt: now,
+        };
+        const updatedAccounts = accounts.map((a) =>
+          a.id === updatedFrom.id ? updatedFrom : a.id === updatedTo.id ? updatedTo : a
+        );
 
-        let targetInv = data.toInvestmentId ? investments.find((i) => i.id === data.toInvestmentId) : undefined;
-        let targetInvId = data.toInvestmentId;
+        const tx: Transaction = {
+          id: txId,
+          userId: user?.id || 'usr_local',
+          type: 'transfer',
+          amount: data.amountIdr,
+          accountId: data.fromAccountId,
+          toAccountId: data.toAccountId,
+          category: `Transfer to ${toAcc.name}`,
+          date: data.date || now.split('T')[0],
+          notes: data.notes,
+          createdAt: now,
+        };
 
-        // Create new investment directly if newInvestment is specified
-        if (!targetInv && data.newInvestment) {
-          const targetCurrency = data.newInvestment.currency || ((data.newInvestment.category === 'USD' || data.newInvestment.category === 'ETF USA') ? 'USD' : 'IDR');
-          const isUsd = targetCurrency === 'USD';
-          let rate = data.exchangeRate || usdIdrRate;
-          let initialCost = data.amountIdr;
-          let amountUsd = undefined;
+        const nextTxs = [tx, ...transactions];
+        setAccounts(updatedAccounts);
+        setTransactions(nextTxs);
+        const nextStats = computeStats(updatedAccounts, nextTxs, investments, usdIdrRate);
+        setStats(nextStats);
 
-          if (isUsd) {
-            const parsedUsd = Number(data.amountUsd);
-            if (!isNaN(parsedUsd) && parsedUsd > 0) {
-              initialCost = Number(parsedUsd.toFixed(2));
-              amountUsd = initialCost;
-              if (data.amountIdr > 0) {
-                rate = data.exchangeRate || Number((data.amountIdr / initialCost).toFixed(2));
-              }
-            } else {
-              initialCost = Number((data.amountIdr / rate).toFixed(2));
-              amountUsd = initialCost;
-            }
-          }
-
-          targetInvId = 'inv_' + Date.now();
-          targetInv = {
-            id: targetInvId,
-            userId: user.id,
-            name: data.newInvestment.name.trim(),
-            category: data.newInvestment.category,
-            currency: targetCurrency,
-            amountInvested: initialCost,
-            currentValue: initialCost,
-            customExchangeRate: isUsd ? rate : undefined,
-            createdAt: now,
-            updatedAt: now,
-            ...(data.newInvestment.units !== undefined ? { units: data.newInvestment.units } : {}),
-            ...(data.newInvestment.platform?.trim() ? { platform: data.newInvestment.platform.trim() } : {}),
-            ...(data.newInvestment.notes?.trim() ? { notes: data.newInvestment.notes.trim() } : {}),
-          };
-          await firestoreService.saveInvestment(targetInv);
-
-          // Deduct from source bank/cash
-          await firestoreService.saveAccount({
-            ...fromAcc,
-            balance: fromAcc.balance - data.amountIdr,
-            updatedAt: now,
-          });
-
-          // Log transaction
-          const tx: Transaction = {
-            id: txId,
-            userId: user.id,
-            type: 'bank_to_investment',
-            amount: data.amountIdr,
-            accountId: data.fromAccountId,
-            toInvestmentId: targetInvId,
-            amountUsd: isUsd ? amountUsd : undefined,
-            exchangeRate: isUsd ? rate : undefined,
-            category: `Funded ${targetInv.name}`,
-            date: data.date || now.split('T')[0],
-            notes: data.notes || `Initial funding for ${targetInv.name} from ${fromAcc.name}`,
-            createdAt: now,
-          };
-          await firestoreService.saveTransaction(tx);
-          return;
-        }
-
-        if (fromAcc && targetInv) {
-          await firestoreService.saveAccount({
-            ...fromAcc,
-            balance: fromAcc.balance - data.amountIdr,
-            updatedAt: now,
-          });
-          const isUsd = targetInv.currency === 'USD';
-          let rate = data.exchangeRate || targetInv.customExchangeRate || usdIdrRate;
-          let addedCost = data.amountIdr;
-          let addedVal = data.amountIdr;
-          let amountUsd = undefined;
-
-          if (isUsd) {
-            const parsedUsd = Number(data.amountUsd);
-            if (!isNaN(parsedUsd) && parsedUsd > 0) {
-              addedCost = Number(parsedUsd.toFixed(2));
-              addedVal = addedCost;
-              amountUsd = addedCost;
-              if (data.amountIdr > 0) {
-                rate = data.exchangeRate || Number((data.amountIdr / addedCost).toFixed(2));
-              }
-            } else {
-              addedCost = Number((data.amountIdr / rate).toFixed(2));
-              addedVal = addedCost;
-              amountUsd = addedCost;
-            }
-          }
-
-          await firestoreService.saveInvestment({
-            ...targetInv,
-            amountInvested: targetInv.amountInvested + addedCost,
-            currentValue: targetInv.currentValue + addedVal,
-            customExchangeRate: isUsd ? rate : targetInv.customExchangeRate,
-            updatedAt: now,
-          });
-          const tx: Transaction = {
-            id: txId,
-            userId: user.id,
-            type: 'bank_to_investment',
-            amount: data.amountIdr,
-            accountId: data.fromAccountId,
-            toInvestmentId: data.toInvestmentId,
-            amountUsd: isUsd ? amountUsd : undefined,
-            exchangeRate: isUsd ? rate : undefined,
-            category: `Funded ${targetInv.name}`,
-            date: data.date || now.split('T')[0],
-            notes: data.notes,
-            createdAt: now,
-          };
-          await firestoreService.saveTransaction(tx);
-        }
+        offlineSyncManager.saveSnapshot(
+          {
+            accounts: updatedAccounts,
+            transactions: nextTxs,
+            investments,
+            budgets,
+            stats: nextStats,
+            usdIdrRate,
+          },
+          user?.email
+        );
       }
-      return;
-    }
+    } else if (data.type === 'bank_to_investment') {
+      const fromAcc = accounts.find((a) => a.id === data.fromAccountId);
+      if (!fromAcc) throw new Error('Source account not found');
 
-    // Server / Offline LocalDB mode with new investment
-    if (data.type === 'bank_to_investment' && data.newInvestment) {
-      const created = await api.createInvestment({
-        name: data.newInvestment.name.trim(),
-        category: data.newInvestment.category,
-        currency: data.newInvestment.currency,
-        amountInvested: 0,
-        currentValue: 0,
-        customExchangeRate: data.exchangeRate,
-        platform: data.newInvestment.platform,
-        units: data.newInvestment.units,
-        notes: data.newInvestment.notes,
-      });
+      let targetInv = data.toInvestmentId ? investments.find((i) => i.id === data.toInvestmentId) : undefined;
+      let targetInvId = data.toInvestmentId;
+      let updatedInvestments = [...investments];
 
-      await api.executeTransfer({
+      if (!targetInv && data.newInvestment) {
+        const targetCurrency =
+          data.newInvestment.currency ||
+          (data.newInvestment.category === 'USD' || data.newInvestment.category === 'ETF USA' ? 'USD' : 'IDR');
+        const isUsd = targetCurrency === 'USD';
+        let rate = data.exchangeRate || usdIdrRate;
+        let initialCost = data.amountIdr;
+        let amountUsd = undefined;
+
+        if (isUsd) {
+          const parsedUsd = Number(data.amountUsd);
+          if (!isNaN(parsedUsd) && parsedUsd > 0) {
+            initialCost = Number(parsedUsd.toFixed(2));
+            amountUsd = initialCost;
+            if (data.amountIdr > 0) {
+              rate = data.exchangeRate || Number((data.amountIdr / initialCost).toFixed(2));
+            }
+          } else {
+            initialCost = Number((data.amountIdr / rate).toFixed(2));
+            amountUsd = initialCost;
+          }
+        }
+
+        targetInvId = 'inv_' + Date.now();
+        targetInv = {
+          id: targetInvId,
+          userId: user?.id || 'usr_local',
+          name: data.newInvestment.name.trim(),
+          category: data.newInvestment.category,
+          currency: targetCurrency,
+          amountInvested: initialCost,
+          currentValue: initialCost,
+          customExchangeRate: isUsd ? rate : undefined,
+          createdAt: now,
+          updatedAt: now,
+          ...(data.newInvestment.units !== undefined ? { units: data.newInvestment.units } : {}),
+          ...(data.newInvestment.platform?.trim() ? { platform: data.newInvestment.platform.trim() } : {}),
+          ...(data.newInvestment.notes?.trim() ? { notes: data.newInvestment.notes.trim() } : {}),
+        };
+        updatedInvestments = [...updatedInvestments, targetInv];
+      } else if (targetInv) {
+        const isUsd = targetInv.currency === 'USD';
+        let rate = data.exchangeRate || targetInv.customExchangeRate || usdIdrRate;
+        let addedCost = data.amountIdr;
+        let addedVal = data.amountIdr;
+        let amountUsd = undefined;
+
+        if (isUsd) {
+          const parsedUsd = Number(data.amountUsd);
+          if (!isNaN(parsedUsd) && parsedUsd > 0) {
+            addedCost = Number(parsedUsd.toFixed(2));
+            addedVal = addedCost;
+            amountUsd = addedCost;
+            if (data.amountIdr > 0) {
+              rate = data.exchangeRate || Number((data.amountIdr / addedCost).toFixed(2));
+            }
+          } else {
+            addedCost = Number((data.amountIdr / rate).toFixed(2));
+            addedVal = addedCost;
+            amountUsd = addedCost;
+          }
+        }
+
+        const modInv = {
+          ...targetInv,
+          amountInvested: targetInv.amountInvested + addedCost,
+          currentValue: targetInv.currentValue + addedVal,
+          customExchangeRate: isUsd ? rate : targetInv.customExchangeRate,
+          updatedAt: now,
+        };
+        updatedInvestments = updatedInvestments.map((i) => (i.id === modInv.id ? modInv : i));
+        targetInv = modInv;
+      }
+
+      const updatedFrom = {
+        ...fromAcc,
+        balance: fromAcc.balance - data.amountIdr,
+        updatedAt: now,
+      };
+      const updatedAccounts = accounts.map((a) => (a.id === updatedFrom.id ? updatedFrom : a));
+
+      const tx: Transaction = {
+        id: txId,
+        userId: user?.id || 'usr_local',
         type: 'bank_to_investment',
-        fromAccountId: data.fromAccountId,
-        toInvestmentId: created.investment.id,
-        amountIdr: data.amountIdr,
-        amountUsd: data.amountUsd,
-        exchangeRate: data.exchangeRate,
-        date: data.date,
-        notes: data.notes || `Initial funding for ${created.investment.name}`,
-      });
-      await refreshData();
-      return;
+        amount: data.amountIdr,
+        accountId: data.fromAccountId,
+        toInvestmentId: targetInvId,
+        category: `Funded ${targetInv?.name || 'Investment'}`,
+        date: data.date || now.split('T')[0],
+        notes: data.notes || `Initial funding for ${targetInv?.name || 'Investment'} from ${fromAcc.name}`,
+        createdAt: now,
+      };
+
+      const nextTxs = [tx, ...transactions];
+      setAccounts(updatedAccounts);
+      setInvestments(updatedInvestments);
+      setTransactions(nextTxs);
+      const nextStats = computeStats(updatedAccounts, nextTxs, updatedInvestments, usdIdrRate);
+      setStats(nextStats);
+
+      offlineSyncManager.saveSnapshot(
+        {
+          accounts: updatedAccounts,
+          transactions: nextTxs,
+          investments: updatedInvestments,
+          budgets,
+          stats: nextStats,
+          usdIdrRate,
+        },
+        user?.email
+      );
     }
 
-    await api.executeTransfer(data);
-    await refreshData();
+    if (!isFirebase) {
+      api.executeTransfer(data).catch(() => {});
+    }
   };
 
   // Investments
@@ -1409,64 +1520,104 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
     platform?: string;
     notes?: string;
   }) => {
-    if (isFirebase && user) {
-      const now = new Date().toISOString();
-      const chosenCurrency = data.currency || (data.category === 'USD' || data.category === 'ETF USA' ? 'USD' : 'IDR');
-      const newInv: Investment = {
-        id: 'inv_' + Date.now(),
-        userId: user.id,
-        name: data.name,
-        category: data.category,
-        currency: chosenCurrency,
-        amountInvested: data.amountInvested,
-        currentValue: data.currentValue ?? data.amountInvested,
-        customExchangeRate: data.customExchangeRate,
-        createdAt: now,
-        updatedAt: now,
-        ...(data.units !== undefined ? { units: data.units } : {}),
-        ...(data.platform?.trim() ? { platform: data.platform.trim() } : {}),
-        ...(data.notes?.trim() ? { notes: data.notes.trim() } : {}),
-      };
-      await firestoreService.saveInvestment(newInv);
-      return;
-    }
+    const now = new Date().toISOString();
+    const chosenCurrency = data.currency || (data.category === 'USD' || data.category === 'ETF USA' ? 'USD' : 'IDR');
+    const newInv: Investment = {
+      id: 'inv_' + Date.now(),
+      userId: user?.id || 'usr_local',
+      name: data.name,
+      category: data.category,
+      currency: chosenCurrency,
+      amountInvested: data.amountInvested,
+      currentValue: data.currentValue ?? data.amountInvested,
+      customExchangeRate: data.customExchangeRate,
+      createdAt: now,
+      updatedAt: now,
+      ...(data.units !== undefined ? { units: data.units } : {}),
+      ...(data.platform?.trim() ? { platform: data.platform.trim() } : {}),
+      ...(data.notes?.trim() ? { notes: data.notes.trim() } : {}),
+    };
 
-    await api.createInvestment(data);
-    await refreshData();
+    const nextInvs = [...investments, newInv];
+    setInvestments(nextInvs);
+    const nextStats = computeStats(accounts, transactions, nextInvs, usdIdrRate);
+    setStats(nextStats);
+
+    offlineSyncManager.saveSnapshot(
+      {
+        accounts,
+        transactions,
+        investments: nextInvs,
+        budgets,
+        stats: nextStats,
+        usdIdrRate,
+      },
+      user?.email
+    );
+
+    if (!isFirebase) {
+      api.createInvestment(data).catch(() => {});
+    }
   };
 
   const updateInvestment = async (id: string, data: Partial<Investment>) => {
-    if (isFirebase && user) {
-      const target = investments.find((i) => i.id === id);
-      if (target) {
-        const nextCategory = data.category || target.category;
-        const nextCurrency =
-          data.currency ??
-          target.currency ??
-          (nextCategory === 'USD' || nextCategory === 'ETF USA' ? 'USD' : 'IDR');
+    const target = investments.find((i) => i.id === id);
+    if (!target) return;
+    const nextCategory = data.category || target.category;
+    const nextCurrency =
+      data.currency ??
+      target.currency ??
+      (nextCategory === 'USD' || nextCategory === 'ETF USA' ? 'USD' : 'IDR');
 
-        await firestoreService.saveInvestment({
-          ...target,
-          ...data,
-          currency: nextCurrency,
-          updatedAt: new Date().toISOString(),
-        });
-      }
-      return;
+    const updated: Investment = {
+      ...target,
+      ...data,
+      currency: nextCurrency,
+      updatedAt: new Date().toISOString(),
+    };
+    const nextInvs = investments.map((i) => (i.id === id ? updated : i));
+    setInvestments(nextInvs);
+    const nextStats = computeStats(accounts, transactions, nextInvs, usdIdrRate);
+    setStats(nextStats);
+
+    offlineSyncManager.saveSnapshot(
+      {
+        accounts,
+        transactions,
+        investments: nextInvs,
+        budgets,
+        stats: nextStats,
+        usdIdrRate,
+      },
+      user?.email
+    );
+
+    if (!isFirebase) {
+      api.updateInvestment(id, data).catch(() => {});
     }
-
-    await api.updateInvestment(id, data);
-    await refreshData();
   };
 
   const deleteInvestment = async (id: string) => {
-    if (isFirebase) {
-      await firestoreService.deleteInvestment(id);
-      return;
-    }
+    const nextInvs = investments.filter((i) => i.id !== id);
+    setInvestments(nextInvs);
+    const nextStats = computeStats(accounts, transactions, nextInvs, usdIdrRate);
+    setStats(nextStats);
 
-    await api.deleteInvestment(id);
-    await refreshData();
+    offlineSyncManager.saveSnapshot(
+      {
+        accounts,
+        transactions,
+        investments: nextInvs,
+        budgets,
+        stats: nextStats,
+        usdIdrRate,
+      },
+      user?.email
+    );
+
+    if (!isFirebase) {
+      api.deleteInvestment(id).catch(() => {});
+    }
   };
 
   // Holding Types Operations
@@ -1508,68 +1659,46 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
       updatedAt: now,
     };
 
-    setBudgets((prev) => {
-      const idx = prev.findIndex((b) => b.id === budgetId);
-      const next = idx >= 0 ? [...prev] : [...prev, budgetItem];
-      if (idx >= 0) next[idx] = budgetItem;
-      offlineSyncManager.saveSnapshot({ budgets: next });
-      return next;
-    });
+    const idx = budgets.findIndex((b) => b.id === budgetId);
+    const next = idx >= 0 ? [...budgets] : [...budgets, budgetItem];
+    if (idx >= 0) next[idx] = budgetItem;
+    setBudgets(next);
 
-    if (!isOnline) {
-      offlineSyncManager.queueItem({
-        id: budgetId,
-        type: 'budget',
-        action: 'create',
-        data: budgetItem,
-      });
-      return;
-    }
+    offlineSyncManager.saveSnapshot(
+      {
+        accounts,
+        transactions,
+        investments,
+        budgets: next,
+        stats,
+        usdIdrRate,
+      },
+      user?.email
+    );
 
-    try {
-      const res = await api.saveBudget({ id, category, monthlyLimit, month });
-      if (isFirebase && user) {
-        await firestoreService.saveBudget(res.budget);
-      }
-    } catch {
-      offlineSyncManager.queueItem({
-        id: budgetId,
-        type: 'budget',
-        action: 'create',
-        data: budgetItem,
-      });
+    if (!isFirebase) {
+      api.saveBudget({ id, category, monthlyLimit, month }).catch(() => {});
     }
   };
 
   const deleteBudget = async (id: string) => {
-    setBudgets((prev) => {
-      const next = prev.filter((b) => b.id !== id);
-      offlineSyncManager.saveSnapshot({ budgets: next });
-      return next;
-    });
+    const next = budgets.filter((b) => b.id !== id);
+    setBudgets(next);
 
-    if (!isOnline) {
-      offlineSyncManager.queueItem({
-        id,
-        type: 'budget',
-        action: 'delete',
-        data: { id },
-      });
-      return;
-    }
+    offlineSyncManager.saveSnapshot(
+      {
+        accounts,
+        transactions,
+        investments,
+        budgets: next,
+        stats,
+        usdIdrRate,
+      },
+      user?.email
+    );
 
-    try {
-      await api.deleteBudget(id);
-      if (isFirebase && user) {
-        await firestoreService.deleteBudget(id);
-      }
-    } catch {
-      offlineSyncManager.queueItem({
-        id,
-        type: 'budget',
-        action: 'delete',
-        data: { id },
-      });
+    if (!isFirebase) {
+      api.deleteBudget(id).catch(() => {});
     }
   };
 
@@ -1707,23 +1836,24 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
         return computeStats(accounts, transactions, investments, newRate);
       });
 
-      if (isFirebase && user) {
-        if (settings) {
-          await firestoreService.saveSettings({
-            ...settings,
+      if (user?.email) {
+        offlineSyncManager.saveSnapshot(
+          {
             usdIdrRate: newRate,
             rateSource: src,
             rateLastUpdated: ts,
-            autoUpdateRate: isRateAutoUpdate,
-          });
-        }
-      } else {
+            settings: { ...(settings || { userId: user.id, usdIdrRate: newRate, privacyModeDefault: false, theme }), usdIdrRate: newRate, rateSource: src, rateLastUpdated: ts },
+          },
+          user.email
+        );
+      }
+      if (!isFirebase) {
         await api.updateSettings({
           usdIdrRate: newRate,
           rateSource: src,
           rateLastUpdated: ts,
           autoUpdateRate: isRateAutoUpdate,
-        });
+        }).catch(() => {});
       }
 
       return { success: true, rate: newRate };
@@ -1733,7 +1863,7 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
     } finally {
       setIsRateFetching(false);
     }
-  }, [accounts, transactions, investments, isFirebase, user, settings, isRateAutoUpdate]);
+  }, [accounts, transactions, investments, isFirebase, user, settings, isRateAutoUpdate, theme]);
 
   // Auto update every 12 hours from Google Finance / market feeds
   useEffect(() => {
@@ -1776,13 +1906,16 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
     setIsRateAutoUpdateState(enabled);
     exchangeRateService.setAutoUpdateEnabled(enabled);
 
-    if (isFirebase && user && settings) {
-      await firestoreService.saveSettings({
-        ...settings,
-        autoUpdateRate: enabled,
-      });
-    } else {
-      await api.updateSettings({ autoUpdateRate: enabled });
+    if (user?.email) {
+      offlineSyncManager.saveSnapshot(
+        {
+          settings: { ...(settings || { userId: user.id, usdIdrRate, privacyModeDefault: false, theme }), autoUpdateRate: enabled },
+        },
+        user.email
+      );
+    }
+    if (!isFirebase) {
+      await api.updateSettings({ autoUpdateRate: enabled }).catch(() => {});
     }
 
     if (enabled) {
@@ -1802,75 +1935,54 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
       return computeStats(accounts, transactions, investments, newRate);
     });
 
-    if (isFirebase && user) {
-      if (settings) {
-        await firestoreService.saveSettings({
-          ...settings,
+    if (user?.email) {
+      offlineSyncManager.saveSnapshot(
+        {
           usdIdrRate: newRate,
           rateSource: source,
           rateLastUpdated: ts,
-        });
-      }
-      return;
+          settings: { ...(settings || { userId: user.id, usdIdrRate: newRate, privacyModeDefault: false, theme }), usdIdrRate: newRate, rateSource: source, rateLastUpdated: ts },
+        },
+        user.email
+      );
     }
 
-    await api.updateSettings({
-      usdIdrRate: newRate,
-      rateSource: source,
-      rateLastUpdated: ts,
-    });
-    await refreshData();
+    if (!isFirebase) {
+      await api.updateSettings({
+        usdIdrRate: newRate,
+        rateSource: source,
+        rateLastUpdated: ts,
+      }).catch(() => {});
+    }
   };
 
-  // ---------------- AUTOMATIC OFFLINE TO FIREBASE SYNCHRONIZATION ----------------
+  // ---------------- AUTOMATIC OFFLINE TO GOOGLE SHEETS SYNCHRONIZATION ----------------
   const triggerManualSync = useCallback(async () => {
     if (!user || isSyncing) return;
     setIsSyncing(true);
     try {
-      const res = await offlineSyncManager.syncPendingToFirebase();
-      setPendingSyncCount(offlineSyncManager.getPendingQueue().length);
-      if (res.syncedCount > 0) {
-        showNotification({
-          title: 'Sinkronisasi Berhasil',
-          message: `${res.syncedCount} data perubahan offline berhasil disinkronkan ke Firebase.`,
-          type: 'success',
-          durationMs: 4000,
-        });
+      const sheetCfg = getStoredSheetConfig(user.email, settings);
+      if (sheetCfg.webhookUrl && sheetCfg.webhookUrl.startsWith('https://')) {
+        await pullFromGoogleSheet({ silent: false });
+      } else {
+        await refreshData();
       }
-      if (isFirebase) {
-        fetchLatestRate({ silent: true }).catch(() => {});
-      }
+      fetchLatestRate({ silent: true }).catch(() => {});
     } catch (err) {
       console.warn('Manual sync failed:', err);
     } finally {
       setIsSyncing(false);
     }
-  }, [user, isSyncing, isFirebase, fetchLatestRate, showNotification]);
+  }, [user, isSyncing, settings, pullFromGoogleSheet, refreshData, fetchLatestRate]);
 
   useEffect(() => {
     const handleOnline = async () => {
       setIsOnline(true);
       await syncFirestoreOnline();
-
-      // Automatically sync offline queued mutations to Firebase once the device is online
-      if (user && isFirebase) {
-        setIsSyncing(true);
-        try {
-          const res = await offlineSyncManager.syncPendingToFirebase();
-          setPendingSyncCount(offlineSyncManager.getPendingQueue().length);
-          if (res.syncedCount > 0) {
-            showNotification({
-              title: 'Online Kembali',
-              message: `${res.syncedCount} data offline otomatis tersinkronisasi ke Firebase.`,
-              type: 'info',
-              durationMs: 4000,
-            });
-          }
-          fetchLatestRate({ silent: true }).catch(() => {});
-        } catch (err) {
-          console.warn('Automatic online sync error:', err);
-        } finally {
-          setIsSyncing(false);
+      if (user?.email) {
+        const sheetCfg = getStoredSheetConfig(user.email, settings);
+        if (sheetCfg.webhookUrl && sheetCfg.webhookUrl.startsWith('https://')) {
+          pullFromGoogleSheet({ silent: true }).catch(() => {});
         }
       }
     };
@@ -1879,26 +1991,16 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
       setIsOnline(false);
     };
 
-    const handlePendingChange = (e: any) => {
-      if (e?.detail?.count !== undefined) {
-        setPendingSyncCount(e.detail.count);
-      } else {
-        setPendingSyncCount(offlineSyncManager.getPendingQueue().length);
-      }
-    };
-
     window.addEventListener('online', handleOnline);
     window.addEventListener('offline', handleOffline);
-    window.addEventListener('wealthtrack:pending_sync_change', handlePendingChange);
 
     return () => {
       window.removeEventListener('online', handleOnline);
       window.removeEventListener('offline', handleOffline);
-      window.removeEventListener('wealthtrack:pending_sync_change', handlePendingChange);
     };
-  }, [user, isFirebase, fetchLatestRate, showNotification]);
+  }, [user, settings, pullFromGoogleSheet]);
 
-  // Save Google Sheets configuration to both localStorage and Firebase Firestore (so Web & Android APK stay linked)
+  // Save Google Sheets configuration to localStorage and snapshot
   const saveGoogleSheetSettings = useCallback(
     async (cfg: {
       spreadsheetId?: string;
@@ -1920,30 +2022,20 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
         googleSheetLastSynced: saved.lastSynced || undefined,
       };
       setSettings(nextSettings);
-      if (isFirebase && isOnline) {
-        try {
-          await firestoreService.saveSettings(nextSettings);
-        } catch (err) {
-          console.warn('Failed to persist Google Sheet settings to Firestore:', err);
-        }
-      }
+      offlineSyncManager.saveSnapshot({ settings: nextSettings }, user.email);
     },
-    [user, usdIdrRate, isPrivacyMode, theme, settings, isFirebase, isOnline]
+    [user, usdIdrRate, isPrivacyMode, theme, settings]
   );
 
   // Automatic Real-Time Google Sheets Background Sync on any data change (Accounts, Transactions, Investments, Budgets)
-  const lastSheetPayloadHashRef = useRef<string>('');
   useEffect(() => {
     if (!user || isLoading || !isOnline) return;
 
     const sheetCfg = getStoredSheetConfig(user.email, settings);
     if (!sheetCfg.autoSync) return;
 
-    const oauthToken = getCachedGoogleSheetsToken();
     const hasWebhook = Boolean(sheetCfg.webhookUrl && sheetCfg.webhookUrl.startsWith('https://'));
-    const hasOAuthSheet = Boolean(oauthToken && sheetCfg.spreadsheetId);
-
-    if (!hasWebhook && !hasOAuthSheet) return;
+    if (!hasWebhook) return;
 
     const signature = JSON.stringify({
       u: user.email,
@@ -1957,36 +2049,21 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
 
     const timer = setTimeout(async () => {
       try {
-        if (hasWebhook) {
-          const res = await syncFinancialDataViaWebhook(sheetCfg.webhookUrl, {
-            userEmail: user.email,
-            usdIdrRate,
-            stats,
-            accounts,
-            transactions,
-            investments,
-            budgets,
-          });
-          const nowStr = new Date().toLocaleString();
-          saveStoredSheetConfig(user.email, {
-            spreadsheetId: res.spreadsheetId || sheetCfg.spreadsheetId,
-            lastSynced: nowStr,
-          });
-          lastSheetPayloadHashRef.current = signature;
-        } else if (hasOAuthSheet && oauthToken) {
-          await syncFinancialDataToSheet(oauthToken, sheetCfg.spreadsheetId, {
-            userEmail: user.email,
-            usdIdrRate,
-            stats,
-            accounts,
-            transactions,
-            investments,
-            budgets,
-          });
-          const nowStr = new Date().toLocaleString();
-          saveStoredSheetConfig(user.email, { lastSynced: nowStr });
-          lastSheetPayloadHashRef.current = signature;
-        }
+        const res = await syncFinancialDataViaWebhook(sheetCfg.webhookUrl, {
+          userEmail: user.email,
+          usdIdrRate,
+          stats,
+          accounts,
+          transactions,
+          investments,
+          budgets,
+        });
+        const nowStr = new Date().toLocaleString();
+        saveStoredSheetConfig(user.email, {
+          spreadsheetId: res.spreadsheetId || sheetCfg.spreadsheetId,
+          lastSynced: nowStr,
+        });
+        lastSheetPayloadHashRef.current = signature;
       } catch (err) {
         console.warn('Background Google Sheets auto-sync warning:', err);
       }
@@ -2081,6 +2158,7 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
         setPayBillCard,
         isGoogleSheetsModalOpen,
         setIsGoogleSheetsModalOpen,
+        pullFromGoogleSheet,
         saveGoogleSheetSettings,
 
         // Budgeting

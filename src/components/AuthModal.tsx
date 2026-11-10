@@ -10,12 +10,14 @@ import {
   Check,
   AlertCircle,
   Flame,
+  KeyRound,
+  UserPlus,
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { FirebaseSetupModal } from './Modals/FirebaseSetupModal';
 
 export const AuthModal: React.FC = () => {
-  const { login, register, quickDemoLogin, isFirebase } = useAuth();
+  const { login, register, quickDemoLogin, resetPassword, isFirebase } = useAuth();
 
   const [mode, setMode] = useState<'login' | 'register'>('login');
   const [email, setEmail] = useState('');
@@ -24,14 +26,19 @@ export const AuthModal: React.FC = () => {
   const [error, setError] = useState('');
   const [successMsg, setSuccessMsg] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [showResetPrompt, setShowResetPrompt] = useState(false);
+  const [showRegisterPrompt, setShowRegisterPrompt] = useState(false);
   const [isFirebaseModalOpen, setIsFirebaseModalOpen] = useState(false);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
+    setSuccessMsg('');
+    setShowResetPrompt(false);
+    setShowRegisterPrompt(false);
 
     if (!email || !password) {
-      setError('Please fill in all required fields');
+      setError('Mohon isi email dan password Anda.');
       return;
     }
 
@@ -43,22 +50,60 @@ export const AuthModal: React.FC = () => {
         await register(email, password, name);
       }
     } catch (err: any) {
+      console.warn('Authentication error:', err);
       const msg = err?.message || '';
-      if (msg.includes('Invalid email or password') || msg.includes('not found') || msg.includes('Authentication failed')) {
-        setError(
-          'Email atau password salah. Jika belum memiliki akun, klik tab "Register" untuk mendaftar.'
-        );
+      const code = err?.code || '';
+
+      if (code === 'auth/user-not-found' || msg.includes('user-not-found')) {
+        setError(`Akun "${email}" belum terdaftar di database.`);
+        setShowRegisterPrompt(true);
+      } else if (
+        code === 'auth/wrong-password' ||
+        code === 'auth/invalid-credential' ||
+        msg.includes('invalid-credential') ||
+        msg.includes('wrong-password')
+      ) {
+        setError('Password salah atau akun belum dibuat. Periksa password atau reset jika lupa.');
+        setShowResetPrompt(true);
+        setShowRegisterPrompt(true);
+      } else if (code === 'auth/email-already-in-use' || msg.includes('email-already-in-use')) {
+        setError(`Email "${email}" sudah terdaftar. Silakan login atau gunakan reset password.`);
+        setShowResetPrompt(true);
+      } else if (code === 'auth/weak-password' || msg.includes('weak-password')) {
+        setError('Password terlalu lemah. Minimal 6 karakter.');
+      } else if (code === 'auth/too-many-requests' || msg.includes('too-many-requests')) {
+        setError('Terlalu banyak percobaan gagal. Akses dibatasi sementara demi keamanan. Silakan reset password.');
+        setShowResetPrompt(true);
       } else {
-        setError(msg || 'Authentication failed. Please check your credentials.');
+        setError(msg || 'Gagal melakukan autentikasi. Silakan periksa kredensial Anda.');
       }
     } finally {
       setIsSubmitting(false);
     }
   };
 
+  const handleSendResetPassword = async () => {
+    if (!email) {
+      setError('Silakan ketik alamat email Anda pada kolom di bawah.');
+      return;
+    }
+    setError('');
+    setSuccessMsg('');
+    setIsSubmitting(true);
+    try {
+      await resetPassword(email);
+      setSuccessMsg(`Link reset password telah dikirim ke ${email}. Buka inbox Gmail Anda untuk mengatur ulang password.`);
+      setShowResetPrompt(false);
+    } catch (err: any) {
+      setError(err?.message || 'Gagal mengirim link reset password. Pastikan email benar.');
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
 
   const handleQuickDemo = async () => {
     setError('');
+    setSuccessMsg('');
     setIsSubmitting(true);
     try {
       await quickDemoLogin();
@@ -101,6 +146,9 @@ export const AuthModal: React.FC = () => {
               onClick={() => {
                 setMode('login');
                 setError('');
+                setSuccessMsg('');
+                setShowResetPrompt(false);
+                setShowRegisterPrompt(false);
               }}
               className={`py-1.5 rounded transition-all cursor-pointer ${
                 mode === 'login' ? 'bg-[#1b212e] text-emerald-400 border border-[#2a3449] font-bold' : 'text-zinc-400 hover:text-zinc-200'
@@ -113,6 +161,9 @@ export const AuthModal: React.FC = () => {
               onClick={() => {
                 setMode('register');
                 setError('');
+                setSuccessMsg('');
+                setShowResetPrompt(false);
+                setShowRegisterPrompt(false);
               }}
               className={`py-1.5 rounded transition-all cursor-pointer ${
                 mode === 'register' ? 'bg-[#1b212e] text-emerald-400 border border-[#2a3449] font-bold' : 'text-zinc-400 hover:text-zinc-200'
@@ -131,16 +182,47 @@ export const AuthModal: React.FC = () => {
           </div>
 
           {error && (
-            <div className="flex items-center gap-2 p-2.5 mb-3.5 rounded bg-rose-500/10 border border-rose-500/30 text-rose-300 text-xs">
-              <AlertCircle className="w-4 h-4 shrink-0 text-rose-400" />
-              <span>{error}</span>
+            <div className="p-3 mb-3.5 rounded bg-rose-500/10 border border-rose-500/30 text-rose-300 text-xs space-y-2">
+              <div className="flex items-start gap-2">
+                <AlertCircle className="w-4 h-4 shrink-0 text-rose-400 mt-0.5" />
+                <span className="leading-relaxed">{error}</span>
+              </div>
+
+              {(showResetPrompt || showRegisterPrompt) && (
+                <div className="flex flex-wrap gap-2 pt-1 border-t border-rose-500/20">
+                  {showResetPrompt && (
+                    <button
+                      type="button"
+                      onClick={handleSendResetPassword}
+                      disabled={isSubmitting}
+                      className="px-2.5 py-1 rounded bg-rose-500/20 hover:bg-rose-500/30 text-rose-200 text-[11px] font-bold flex items-center gap-1 cursor-pointer transition-colors"
+                    >
+                      <KeyRound className="w-3 h-3" />
+                      <span>Kirim Link Reset Password</span>
+                    </button>
+                  )}
+                  {showRegisterPrompt && mode === 'login' && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setMode('register');
+                        setError('');
+                      }}
+                      className="px-2.5 py-1 rounded bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-300 text-[11px] font-bold flex items-center gap-1 cursor-pointer transition-colors"
+                    >
+                      <UserPlus className="w-3 h-3" />
+                      <span>Daftar Akun Baru Sekarang</span>
+                    </button>
+                  )}
+                </div>
+              )}
             </div>
           )}
 
           {successMsg && (
-            <div className="flex items-center gap-2 p-2.5 mb-3.5 rounded bg-emerald-500/10 border border-emerald-500/30 text-emerald-300 text-xs">
-              <Check className="w-4 h-4 shrink-0 text-emerald-400" />
-              <span>{successMsg}</span>
+            <div className="flex items-start gap-2 p-3 mb-3.5 rounded bg-emerald-500/10 border border-emerald-500/30 text-emerald-300 text-xs">
+              <Check className="w-4 h-4 shrink-0 text-emerald-400 mt-0.5" />
+              <span className="leading-relaxed">{successMsg}</span>
             </div>
           )}
 
@@ -181,9 +263,20 @@ export const AuthModal: React.FC = () => {
             </div>
 
             <div>
-              <label className="block text-[10px] font-bold uppercase tracking-wider text-zinc-400 mb-1">
-                ACCESS KEY / PASSWORD
-              </label>
+              <div className="flex items-center justify-between mb-1">
+                <label className="block text-[10px] font-bold uppercase tracking-wider text-zinc-400">
+                  ACCESS KEY / PASSWORD
+                </label>
+                {mode === 'login' && (
+                  <button
+                    type="button"
+                    onClick={handleSendResetPassword}
+                    className="text-[10px] text-emerald-400 hover:text-emerald-300 underline font-medium cursor-pointer"
+                  >
+                    Lupa Password?
+                  </button>
+                )}
+              </div>
               <div className="relative">
                 <Lock className="w-3.5 h-3.5 text-zinc-500 absolute left-3 top-1/2 -translate-y-1/2" />
                 <input
@@ -202,7 +295,13 @@ export const AuthModal: React.FC = () => {
               disabled={isSubmitting}
               className="w-full flex items-center justify-center gap-2 py-2.5 px-4 rounded font-bold text-xs bg-emerald-500 hover:bg-emerald-400 text-slate-950 transition-all cursor-pointer disabled:opacity-50 mt-1 uppercase"
             >
-              <span>{isSubmitting ? 'AUTHENTICATING...' : mode === 'login' ? 'AUTHORIZE TERMINAL SESSION' : 'REGISTER ACCOUNT'}</span>
+              <span>
+                {isSubmitting
+                  ? 'AUTHENTICATING...'
+                  : mode === 'login'
+                  ? 'AUTHORIZE TERMINAL SESSION'
+                  : 'REGISTER ACCOUNT'}
+              </span>
               <ArrowRight className="w-3.5 h-3.5 stroke-[2.5]" />
             </button>
           </form>

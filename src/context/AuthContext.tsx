@@ -13,6 +13,7 @@ interface AuthContextType {
   register: (email: string, password: string, name?: string) => Promise<void>;
   logout: () => void;
   quickDemoLogin: () => Promise<void>;
+  resetPassword: (email: string) => Promise<void>;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -129,6 +130,13 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
   };
 
+  const resetPassword = async (email: string) => {
+    if (isFirebase) {
+      await firestoreService.resetPassword(email);
+      return;
+    }
+  };
+
   return (
     <AuthContext.Provider
       value={{
@@ -140,6 +148,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         register,
         logout,
         quickDemoLogin,
+        resetPassword,
       }}
     >
       {children}

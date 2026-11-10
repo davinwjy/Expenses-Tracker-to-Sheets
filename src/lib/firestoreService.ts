@@ -1,6 +1,7 @@
 import {
   createUserWithEmailAndPassword,
   signInWithEmailAndPassword,
+  sendPasswordResetEmail,
   signOut,
   updateProfile,
   onAuthStateChanged,
@@ -98,6 +99,13 @@ export const firestoreService = {
     if (firebaseAuth) {
       await signOut(firebaseAuth);
     }
+  },
+
+  async resetPassword(email: string): Promise<void> {
+    if (!firebaseAuth) {
+      throw new Error('Firebase Auth is not configured yet');
+    }
+    await sendPasswordResetEmail(firebaseAuth, email.trim());
   },
 
   onAuthChanged(callback: (user: User | null) => void): Unsubscribe {

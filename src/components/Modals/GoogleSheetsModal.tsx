@@ -10,17 +10,12 @@ import {
   AlertTriangle,
   Copy,
   Check,
-  Link2,
   Zap,
   Smartphone,
 } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
 import { useFinance } from '../../context/FinanceContext';
 import {
-  authenticateGoogleSheets,
-  getCachedGoogleSheetsToken,
-  createWealthTrackSpreadsheet,
-  syncFinancialDataToSheet,
   syncFinancialDataViaWebhook,
   getStoredSheetConfig,
   extractSpreadsheetId,
@@ -43,19 +38,20 @@ export const GoogleSheetsModal: React.FC<GoogleSheetsModalProps> = ({ isOpen, on
     stats,
     usdIdrRate,
     settings,
+    pullFromGoogleSheet,
     saveGoogleSheetSettings,
     showNotification,
   } = useFinance();
 
-  const [activeMode, setActiveMode] = useState<'webhook' | 'oauth' | 'csv'>('webhook');
+  const [activeMode, setActiveMode] = useState<'webhook' | 'csv'>('webhook');
   const [isLoading, setIsLoading] = useState(false);
+  const [isPulling, setIsPulling] = useState(false);
   const [spreadsheetId, setSpreadsheetId] = useState<string>('');
   const [webhookUrl, setWebhookUrl] = useState<string>('');
   const [autoSync, setAutoSync] = useState<boolean>(true);
   const [lastSynced, setLastSynced] = useState<string>('');
   const [authError, setAuthError] = useState<string | null>(null);
   const [copiedScript, setCopiedScript] = useState(false);
-  const [copiedDomain, setCopiedDomain] = useState(false);
   const [showScriptBox, setShowScriptBox] = useState(false);
 
   useEffect(() => {
@@ -70,23 +66,11 @@ export const GoogleSheetsModal: React.FC<GoogleSheetsModalProps> = ({ isOpen, on
 
   if (!isOpen) return null;
 
-  const currentDomain = typeof window !== 'undefined' ? window.location.hostname : '';
-
   const handleCopyScript = async () => {
     try {
       await navigator.clipboard.writeText(GOOGLE_APPS_SCRIPT_TEMPLATE);
       setCopiedScript(true);
       setTimeout(() => setCopiedScript(false), 3000);
-    } catch {
-      // ignore
-    }
-  };
-
-  const handleCopyDomain = async () => {
-    try {
-      await navigator.clipboard.writeText(currentDomain);
-      setCopiedDomain(true);
-      setTimeout(() => setCopiedDomain(false), 3000);
     } catch {
       // ignore
     }
@@ -104,7 +88,6 @@ export const GoogleSheetsModal: React.FC<GoogleSheetsModalProps> = ({ isOpen, on
     setIsLoading(true);
     setAuthError(null);
     try {
-      const cleanSheetId = extractSpreadsheetId(spreadsheetId);
       const res = await syncFinancialDataViaWebhook(cleanWebhook, {
         userEmail: user.email,
         usdIdrRate,
@@ -115,93 +98,57 @@ export const GoogleSheetsModal: React.FC<GoogleSheetsModalProps> = ({ isOpen, on
         budgets,
       });
 
-      const finalSheetId = res.spreadsheetId || cleanSheetId;
       const now = new Date().toLocaleString();
-
-      setSpreadsheetId(finalSheetId || '');
       setLastSynced(now);
+      if (res.spreadsheetId) setSpreadsheetId(res.spreadsheetId);
 
       await saveGoogleSheetSettings({
-        spreadsheetId: finalSheetId,
+        spreadsheetId: res.spreadsheetId || spreadsheetId,
         webhookUrl: cleanWebhook,
         autoSync: true,
         lastSynced: now,
       });
 
       showNotification({
-        title: 'Live Google Sheet Auto-Sync Connected!',
-        message: `All 5 tabs (Summary, Accounts, Transactions, Investments, Budgets) for ${user.email} are now synced & linked across Web and Android!`,
+        title: 'Google Sheets Synced Successfully',
+        message: `All 5 tabs (Summary, Accounts, Transactions, Investments, Budgets) for ${user.email} are now live in your Google Sheet!`,
         type: 'success',
       });
     } catch (err: any) {
-      console.error('Webhook sync error:', err);
+      console.error('Google Sheets Webhook sync error:', err);
       setAuthError(
-        err?.message ||
-          'Failed to reach Google Apps Script URL. Make sure you deployed as "Web app" with "Who has access: Anyone".'
+        'Failed to reach Google Apps Script URL. Make sure you deployed as "Web app" with "Who has access: Anyone".'
       );
     } finally {
       setIsLoading(false);
     }
   };
 
-  // 2. Connect & Sync via Direct Google OAuth REST API
-  const handleOAuthConnectAndSync = async () => {
+  // Pull latest financial data from Google Sheet Webhook (Two-way sync)
+  const handlePullFromSheets = async () => {
     if (!user) return;
-    setIsLoading(true);
+    const cleanWebhook = webhookUrl.trim();
+    if (!cleanWebhook || !cleanWebhook.startsWith('https://script.google.com/')) {
+      setAuthError('Please paste a valid Google Apps Script Web App URL first.');
+      return;
+    }
+
+    setIsPulling(true);
     setAuthError(null);
     try {
-      let token = getCachedGoogleSheetsToken();
-      if (!token) {
-        token = await authenticateGoogleSheets();
+      const ok = await pullFromGoogleSheet({ silent: false });
+      if (ok) {
+        const now = new Date().toLocaleString();
+        setLastSynced(now);
       }
-
-      let currentId = extractSpreadsheetId(spreadsheetId);
-      if (!currentId) {
-        currentId = await createWealthTrackSpreadsheet(token, user.email);
-      }
-
-      await syncFinancialDataToSheet(token, currentId, {
-        userEmail: user.email,
-        usdIdrRate,
-        stats,
-        accounts,
-        transactions,
-        investments,
-        budgets,
-      });
-
-      const now = new Date().toLocaleString();
-      setSpreadsheetId(currentId);
-      setLastSynced(now);
-
-      await saveGoogleSheetSettings({
-        spreadsheetId: currentId,
-        webhookUrl,
-        autoSync: true,
-        lastSynced: now,
-      });
-
-      showNotification({
-        title: 'Google Sheets OAuth Sync Success',
-        message: `All 5 tabs (Summary, Accounts, Transactions, Investments, Budgets) for ${user.email} were synced to your Google Sheet!`,
-        type: 'success',
-      });
     } catch (err: any) {
-      console.error('Google Sheets OAuth sync error:', err);
-      const msg = err?.message || '';
-      if (msg.includes('unauthorized-domain') || msg.includes('auth/unauthorized-domain')) {
-        setAuthError(
-          `Firebase Auth blocked the popup because "${currentDomain}" is not yet in your Firebase Console -> Authentication -> Settings -> Authorized domains. Either add "${currentDomain}" there, OR use the "Web + Android Auto-Sync Bridge" tab above which works immediately without domain restrictions!`
-        );
-      } else {
-        setAuthError(msg || 'Failed to connect to Google Sheets via OAuth.');
-      }
+      setAuthError(err.message || 'Failed to pull data from Google Sheets.');
     } finally {
-      setIsLoading(false);
+      setIsPulling(false);
     }
   };
 
-  // 3. Export All 5 Tabs as CSV Files
+  // 2. Export All 5 Tabs as CSV Files
   const handleExportAllCsv = () => {
     try {
       const prefix = `WealthTrack_${(user?.email || 'davinwijaya16').split('@')[0]}`;
@@ -220,33 +167,27 @@ export const GoogleSheetsModal: React.FC<GoogleSheetsModalProps> = ({ isOpen, on
           .map((row) =>
             row
               .map((cell) => {
-                const str = cell === null || cell === undefined ? '' : String(cell);
-                if (str.includes(',') || str.includes('"') || str.includes('\n')) {
-                  return `"${str.replace(/"/g, '""')}"`;
-                }
-                return str;
+                if (cell === null || cell === undefined) return '""';
+                const str = String(cell).replace(/"/g, '""');
+                return `"${str}"`;
               })
               .join(',')
           )
-          .join('\n');
+          .join('\r\n');
 
-      downloadCsv(`${prefix}_1_summary.csv`, toCsvString(sheetsData.Summary));
-      downloadCsv(`${prefix}_2_accounts.csv`, toCsvString(sheetsData.Accounts));
-      downloadCsv(`${prefix}_3_transactions.csv`, toCsvString(sheetsData.Transactions));
-      downloadCsv(`${prefix}_4_investments.csv`, toCsvString(sheetsData.Investments));
-      downloadCsv(`${prefix}_5_budgets.csv`, toCsvString(sheetsData.Budgets));
+      downloadCsv(`${prefix}_1_Summary.csv`, toCsvString(sheetsData.Summary));
+      setTimeout(() => downloadCsv(`${prefix}_2_Accounts.csv`, toCsvString(sheetsData.Accounts)), 150);
+      setTimeout(() => downloadCsv(`${prefix}_3_Transactions.csv`, toCsvString(sheetsData.Transactions)), 300);
+      setTimeout(() => downloadCsv(`${prefix}_4_Investments.csv`, toCsvString(sheetsData.Investments)), 450);
+      setTimeout(() => downloadCsv(`${prefix}_5_Budgets.csv`, toCsvString(sheetsData.Budgets)), 600);
 
       showNotification({
-        title: 'Complete Financial Ledger Exported',
-        message: 'Downloaded all 5 CSV sheets (Summary, Accounts, Transactions, Investments, Budgets) ready for Google Sheets!',
+        title: 'CSV Files Downloaded',
+        message: '5 CSV files generated (Summary, Accounts, Transactions, Investments, Budgets).',
         type: 'success',
       });
     } catch (err: any) {
-      showNotification({
-        title: 'Export Failed',
-        message: err.message || 'Could not export CSV files',
-        type: 'error',
-      });
+      setAuthError(`Failed to export CSV: ${err.message}`);
     }
   };
 
@@ -290,6 +231,14 @@ export const GoogleSheetsModal: React.FC<GoogleSheetsModalProps> = ({ isOpen, on
                   {user?.email}
                 </span>
               </p>
+              <div className="flex items-center gap-1.5 flex-wrap pt-1">
+                <span className="px-2 py-0.5 rounded-md bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 font-medium text-[10px] border border-emerald-500/20">
+                  Database: Google Sheets (Cloud Ledger)
+                </span>
+                <span className="px-2 py-0.5 rounded-md bg-blue-500/10 text-blue-600 dark:text-blue-400 font-medium text-[10px] border border-blue-500/20">
+                  Login: Firebase Auth
+                </span>
+              </div>
             </div>
           </div>
           <button
@@ -305,7 +254,7 @@ export const GoogleSheetsModal: React.FC<GoogleSheetsModalProps> = ({ isOpen, on
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2">
               <span className="text-xs font-semibold text-slate-700 dark:text-zinc-300">
-                Real-Time Sync on Every Input (Web & Android):
+                Real-Time Auto-Sync on Every Input:
               </span>
             </div>
             <label className="flex items-center gap-2 cursor-pointer">
@@ -321,28 +270,28 @@ export const GoogleSheetsModal: React.FC<GoogleSheetsModalProps> = ({ isOpen, on
             </label>
           </div>
 
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 pt-2 border-t border-slate-200 dark:border-[#1b212e] text-[11px] font-mono text-slate-600 dark:text-zinc-400">
-            <div>
-              <strong className="text-slate-900 dark:text-zinc-100">{accounts.length}</strong> Accounts
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-[11px] pt-1 border-t border-slate-200 dark:border-[#1d2332]">
+            <div className="p-2 rounded-lg bg-white dark:bg-[#080a0f] border border-slate-200 dark:border-[#1d2332]">
+              <span className="text-slate-500 dark:text-zinc-500 block">Accounts</span>
+              <strong className="text-slate-900 dark:text-zinc-100">{accounts.length} Accounts</strong>
             </div>
-            <div>
-              <strong className="text-slate-900 dark:text-zinc-100">{transactions.length}</strong> Transactions
+            <div className="p-2 rounded-lg bg-white dark:bg-[#080a0f] border border-slate-200 dark:border-[#1d2332]">
+              <span className="text-slate-500 dark:text-zinc-500 block">Transactions</span>
+              <strong className="text-slate-900 dark:text-zinc-100">{transactions.length} Records</strong>
             </div>
-            <div>
-              <strong className="text-slate-900 dark:text-zinc-100">{investments.length}</strong> Investments
+            <div className="p-2 rounded-lg bg-white dark:bg-[#080a0f] border border-slate-200 dark:border-[#1d2332]">
+              <span className="text-slate-500 dark:text-zinc-500 block">Investments</span>
+              <strong className="text-slate-900 dark:text-zinc-100">{investments.length} Assets</strong>
             </div>
-            <div>
-              <strong className="text-slate-900 dark:text-zinc-100">{budgets.length}</strong> Budgets
+            <div className="p-2 rounded-lg bg-white dark:bg-[#080a0f] border border-slate-200 dark:border-[#1d2332]">
+              <span className="text-slate-500 dark:text-zinc-500 block">Budgets</span>
+              <strong className="text-slate-900 dark:text-zinc-100">{budgets.length} Categories</strong>
             </div>
           </div>
 
-          {(webhookUrl || spreadsheetId) && (
-            <div className="flex flex-wrap items-center justify-between gap-2 pt-2 border-t border-slate-200 dark:border-[#1b212e] text-[11px]">
-              <span className="text-emerald-600 dark:text-emerald-400 font-mono flex items-center gap-1 font-semibold">
-                <CheckCircle2 className="w-3.5 h-3.5" />
-                {webhookUrl ? '24/7 Cloud Bridge Linked' : 'Spreadsheet ID Linked'}
-                {lastSynced ? ` · Last Synced: ${lastSynced}` : ''}
-              </span>
+          {lastSynced && (
+            <div className="flex items-center justify-between text-[11px] text-slate-500 dark:text-zinc-400 pt-1">
+              <span>Last Synchronized: <strong className="text-emerald-500">{lastSynced}</strong></span>
               {spreadsheetId && (
                 <a
                   href={`https://docs.google.com/spreadsheets/d/${extractSpreadsheetId(spreadsheetId)}/edit`}
@@ -357,37 +306,22 @@ export const GoogleSheetsModal: React.FC<GoogleSheetsModalProps> = ({ isOpen, on
           )}
         </div>
 
-        {/* Mode Selector Tabs */}
-        <div className="grid grid-cols-3 p-1 bg-slate-100 dark:bg-[#080a0f] border border-slate-200 dark:border-[#1d2332] rounded-xl text-xs font-semibold">
+        {/* Mode Selector Tabs (2 Clean Options) */}
+        <div className="grid grid-cols-2 p-1 bg-slate-100 dark:bg-[#080a0f] border border-slate-200 dark:border-[#1d2332] rounded-xl text-xs font-semibold">
           <button
             type="button"
             onClick={() => {
               setActiveMode('webhook');
               setAuthError(null);
             }}
-            className={`py-2 px-2 rounded-lg transition-all cursor-pointer flex items-center justify-center gap-1.5 ${
+            className={`py-2 px-3 rounded-lg transition-all cursor-pointer flex items-center justify-center gap-1.5 ${
               activeMode === 'webhook'
                 ? 'bg-emerald-500 text-slate-950 font-bold shadow-sm'
                 : 'text-slate-600 dark:text-zinc-400 hover:text-slate-900 dark:hover:text-white'
             }`}
           >
             <Zap className="w-3.5 h-3.5" />
-            <span>Web + APK Bridge</span>
-          </button>
-          <button
-            type="button"
-            onClick={() => {
-              setActiveMode('oauth');
-              setAuthError(null);
-            }}
-            className={`py-2 px-2 rounded-lg transition-all cursor-pointer flex items-center justify-center gap-1.5 ${
-              activeMode === 'oauth'
-                ? 'bg-emerald-500 text-slate-950 font-bold shadow-sm'
-                : 'text-slate-600 dark:text-zinc-400 hover:text-slate-900 dark:hover:text-white'
-            }`}
-          >
-            <Link2 className="w-3.5 h-3.5" />
-            <span>Google OAuth</span>
+            <span>⚡ Real-Time Auto-Sync (Web & Android)</span>
           </button>
           <button
             type="button"
@@ -395,37 +329,26 @@ export const GoogleSheetsModal: React.FC<GoogleSheetsModalProps> = ({ isOpen, on
               setActiveMode('csv');
               setAuthError(null);
             }}
-            className={`py-2 px-2 rounded-lg transition-all cursor-pointer flex items-center justify-center gap-1.5 ${
+            className={`py-2 px-3 rounded-lg transition-all cursor-pointer flex items-center justify-center gap-1.5 ${
               activeMode === 'csv'
                 ? 'bg-emerald-500 text-slate-950 font-bold shadow-sm'
                 : 'text-slate-600 dark:text-zinc-400 hover:text-slate-900 dark:hover:text-white'
             }`}
           >
             <Download className="w-3.5 h-3.5" />
-            <span>5-Sheet CSV</span>
+            <span>📥 5-Sheet CSV Export</span>
           </button>
         </div>
 
         {authError && (
-          <div className="p-3.5 rounded-xl bg-amber-500/10 border border-amber-500/30 text-xs text-amber-800 dark:text-amber-300 space-y-2">
-            <div className="flex items-center gap-2 font-bold">
-              <AlertTriangle className="w-4 h-4 shrink-0" />
-              <span>Sync Notice</span>
+          <div className="p-3.5 rounded-xl bg-amber-500/10 border border-amber-500/30 text-xs text-amber-800 dark:text-amber-200 space-y-1.5 animate-in fade-in">
+            <div className="flex items-center gap-2 font-bold text-amber-900 dark:text-amber-300">
+              <AlertTriangle className="w-4 h-4 shrink-0 text-amber-500" />
+              <span>Notice</span>
             </div>
-            <p className="leading-relaxed">{authError}</p>
-            {activeMode === 'oauth' && currentDomain && (
-              <div className="flex items-center justify-between gap-2 p-2 rounded-lg bg-black/20 font-mono text-[11px]">
-                <span className="truncate">{currentDomain}</span>
-                <button
-                  type="button"
-                  onClick={handleCopyDomain}
-                  className="px-2 py-1 rounded bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 font-bold flex items-center gap-1 shrink-0 cursor-pointer"
-                >
-                  {copiedDomain ? <Check className="w-3 h-3" /> : <Copy className="w-3 h-3" />}
-                  <span>{copiedDomain ? 'Copied!' : 'Copy Domain'}</span>
-                </button>
-              </div>
-            )}
+            <p className="leading-relaxed text-[11px] text-slate-700 dark:text-zinc-300">
+              {authError}
+            </p>
           </div>
         )}
 
@@ -436,7 +359,7 @@ export const GoogleSheetsModal: React.FC<GoogleSheetsModalProps> = ({ isOpen, on
               <div className="flex items-center justify-between">
                 <span className="font-bold text-emerald-700 dark:text-emerald-400 flex items-center gap-1.5">
                   <Smartphone className="w-4 h-4" />
-                  Works 100% on Website, GitHub Pages & Android APK (No Domain Error!)
+                  Works 100% on Website, GitHub Pages & Android APK
                 </span>
                 <button
                   type="button"
@@ -447,9 +370,7 @@ export const GoogleSheetsModal: React.FC<GoogleSheetsModalProps> = ({ isOpen, on
                 </button>
               </div>
               <p className="text-[11px] text-slate-600 dark:text-zinc-400 leading-relaxed">
-                Connect any Google Sheet once using a Google Apps Script Web App URL. It is saved to your{' '}
-                <strong className="text-slate-800 dark:text-zinc-200">{user?.email}</strong> Firebase profile so every
-                new Expense, Income, Transfer, Account, Investment, or Budget you input on <strong>Web or Android APK</strong> updates your Google Sheet automatically!
+                Connect any Google Sheet once using a Google Apps Script Web App URL. Every new Expense, Income, Transfer, Account, Investment, or Budget you input on <strong>Web or Android APK</strong> updates your Google Sheet automatically!
               </p>
 
               {showScriptBox && (
@@ -468,135 +389,92 @@ export const GoogleSheetsModal: React.FC<GoogleSheetsModalProps> = ({ isOpen, on
                     </li>
                     <li>
                       Click <strong>Extensions → Apps Script</strong>, replace the code with the script below, and click{' '}
-                      <strong>Save</strong>.
+                      <strong>Save</strong> (💾).
                     </li>
                     <li>
-                      Click <strong>Deploy → New deployment</strong>, choose type <strong>Web app</strong>, set{' '}
-                      <em>Who has access</em> to <strong>Anyone</strong>, and click <strong>Deploy</strong>.
+                      Click <strong>Deploy → New deployment</strong>, select type <strong>Web app</strong>, set{' '}
+                      <strong>Who has access: Anyone</strong>, and click <strong>Deploy</strong>.
                     </li>
-                    <li>Paste the generated <strong>Web app URL</strong> below and click <strong>Save & Sync All Data Now</strong>!</li>
+                    <li>Copy the generated <strong>Web app URL</strong> and paste it below!</li>
                   </ol>
-                  <div className="flex items-center justify-between pt-1">
-                    <span className="text-[10px] font-mono uppercase text-slate-500">Apps Script Code:</span>
+
+                  <div className="relative">
+                    <pre className="p-3 rounded-lg bg-black/40 text-[10px] font-mono text-zinc-300 overflow-x-auto max-h-36">
+                      {GOOGLE_APPS_SCRIPT_TEMPLATE}
+                    </pre>
                     <button
                       type="button"
                       onClick={handleCopyScript}
-                      className="px-2.5 py-1 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-[11px] flex items-center gap-1 cursor-pointer"
+                      className="absolute top-2 right-2 px-2.5 py-1 rounded bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-bold text-[10px] flex items-center gap-1 cursor-pointer transition-colors shadow-sm"
                     >
-                      {copiedScript ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
-                      <span>{copiedScript ? 'Script Copied!' : 'Copy Apps Script Code'}</span>
+                      {copiedScript ? <Check className="w-3 h-3" /> : <Copy className="w-3 h-3" />}
+                      <span>{copiedScript ? 'Copied Script!' : 'Copy Script'}</span>
                     </button>
                   </div>
                 </div>
               )}
             </div>
 
-            <div className="space-y-3">
-              <div>
-                <label className="block text-xs font-semibold text-slate-700 dark:text-zinc-300 mb-1">
-                  Google Apps Script Web App URL <span className="text-emerald-500">*</span>
-                </label>
-                <input
-                  type="url"
-                  value={webhookUrl}
-                  onChange={(e) => setWebhookUrl(e.target.value)}
-                  placeholder="https://script.google.com/macros/s/.../exec"
-                  className="w-full px-3 py-2 rounded-xl bg-slate-50 dark:bg-[#080a0f] border border-slate-300 dark:border-[#1d2332] text-xs font-mono text-slate-900 dark:text-zinc-100 focus:outline-none focus:border-emerald-500"
-                />
-              </div>
+            <div className="space-y-1.5">
+              <label className="block text-xs font-semibold text-slate-700 dark:text-zinc-300">
+                Google Apps Script Web App URL:
+              </label>
+              <input
+                type="url"
+                value={webhookUrl}
+                onChange={(e) => setWebhookUrl(e.target.value)}
+                placeholder="https://script.google.com/macros/s/.../exec"
+                className="w-full px-3 py-2.5 rounded-xl bg-slate-50 dark:bg-[#080a0f] border border-slate-300 dark:border-[#1d2332] text-xs font-mono text-slate-900 dark:text-zinc-100 placeholder:text-slate-400 dark:placeholder:text-zinc-600 focus:outline-none focus:border-emerald-500"
+              />
+            </div>
 
-              <div>
-                <label className="block text-xs font-semibold text-slate-700 dark:text-zinc-300 mb-1">
-                  Google Sheet URL or Spreadsheet ID (Optional — auto-detected on sync)
-                </label>
-                <input
-                  type="text"
-                  value={spreadsheetId}
-                  onChange={(e) => setSpreadsheetId(e.target.value)}
-                  placeholder="https://docs.google.com/spreadsheets/d/1AbC.../edit"
-                  className="w-full px-3 py-2 rounded-xl bg-slate-50 dark:bg-[#080a0f] border border-slate-300 dark:border-[#1d2332] text-xs font-mono text-slate-900 dark:text-zinc-100 focus:outline-none focus:border-emerald-500"
-                />
-              </div>
-
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
               <button
                 type="button"
                 onClick={handleWebhookSync}
-                disabled={isLoading}
-                className="w-full py-3 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs flex items-center justify-center gap-2 transition-all cursor-pointer shadow-lg shadow-emerald-500/20 disabled:opacity-50"
+                disabled={isLoading || isPulling}
+                className="w-full py-3 px-3 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs flex items-center justify-center gap-2 transition-all cursor-pointer shadow-lg shadow-emerald-500/20 disabled:opacity-50"
               >
                 {isLoading ? (
                   <>
                     <Loader2 className="w-4 h-4 animate-spin" />
-                    <span>Syncing All 5 Tabs to Google Sheet...</span>
+                    <span>Kirim ke Sheet...</span>
                   </>
                 ) : (
                   <>
                     <RefreshCw className="w-4 h-4" />
-                    <span>Save & Sync All Data Now (Summary, Accounts, Tx, Investments, Budgets)</span>
+                    <span>⚡ Kirim ke Google Sheet</span>
+                  </>
+                )}
+              </button>
+
+              <button
+                type="button"
+                onClick={handlePullFromSheets}
+                disabled={isLoading || isPulling}
+                className="w-full py-3 px-3 rounded-xl bg-slate-800 hover:bg-slate-700 text-white font-bold text-xs flex items-center justify-center gap-2 transition-all cursor-pointer shadow-md disabled:opacity-50 border border-slate-700"
+              >
+                {isPulling ? (
+                  <>
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                    <span>Tarik Data...</span>
+                  </>
+                ) : (
+                  <>
+                    <Download className="w-4 h-4 text-emerald-400" />
+                    <span>📥 Tarik Data dari Sheet</span>
                   </>
                 )}
               </button>
             </div>
+
+            <p className="text-[11px] text-slate-500 dark:text-zinc-400 leading-relaxed text-center">
+              💡 Data tersimpan di <strong>Google Sheet</strong> sebagai cloud database utama dan di-cache lokal di perangkat Anda. Gunakan <strong>Tarik Data</strong> untuk sinkronisasi antar-perangkat (HP/Laptop).
+            </p>
           </div>
         )}
 
-        {/* TAB 2: DIRECT GOOGLE OAUTH API */}
-        {activeMode === 'oauth' && (
-          <div className="space-y-3.5">
-            <div className="p-3.5 rounded-xl bg-slate-50 dark:bg-[#121620] border border-slate-200 dark:border-[#1b212e] space-y-2 text-xs">
-              <p className="text-slate-600 dark:text-zinc-300 leading-relaxed">
-                Uses Firebase Google OAuth popup to create or update a Google Sheet directly in your Google Drive.
-              </p>
-              <div className="p-2.5 rounded-lg bg-slate-100 dark:bg-[#080a0f] border border-slate-200 dark:border-[#1d2332] flex items-center justify-between gap-2 text-[11px]">
-                <span className="text-slate-500 dark:text-zinc-400">
-                  Current Domain: <strong className="font-mono text-slate-800 dark:text-zinc-200">{currentDomain}</strong>
-                </span>
-                <button
-                  type="button"
-                  onClick={handleCopyDomain}
-                  className="px-2 py-1 rounded bg-slate-200 dark:bg-slate-800 hover:bg-slate-300 text-slate-700 dark:text-zinc-300 font-mono text-[10px] flex items-center gap-1 cursor-pointer"
-                >
-                  {copiedDomain ? <Check className="w-3 h-3 text-emerald-500" /> : <Copy className="w-3 h-3" />}
-                  <span>{copiedDomain ? 'Copied' : 'Copy for Firebase Auth'}</span>
-                </button>
-              </div>
-            </div>
-
-            <div>
-              <label className="block text-xs font-semibold text-slate-700 dark:text-zinc-300 mb-1">
-                Existing Google Sheet URL or ID (Leave blank to create a new Google Sheet automatically)
-              </label>
-              <input
-                type="text"
-                value={spreadsheetId}
-                onChange={(e) => setSpreadsheetId(e.target.value)}
-                placeholder="Leave blank to auto-create 'WealthTrack Pro - davinwijaya16@gmail.com'"
-                className="w-full px-3 py-2 rounded-xl bg-slate-50 dark:bg-[#080a0f] border border-slate-300 dark:border-[#1d2332] text-xs font-mono text-slate-900 dark:text-zinc-100 focus:outline-none focus:border-emerald-500"
-              />
-            </div>
-
-            <button
-              type="button"
-              onClick={handleOAuthConnectAndSync}
-              disabled={isLoading}
-              className="w-full py-3 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs flex items-center justify-center gap-2 transition-all cursor-pointer shadow-lg shadow-emerald-500/20 disabled:opacity-50"
-            >
-              {isLoading ? (
-                <>
-                  <Loader2 className="w-4 h-4 animate-spin" />
-                  <span>Connecting & Syncing All 5 Tabs...</span>
-                </>
-              ) : (
-                <>
-                  <FileSpreadsheet className="w-4 h-4" />
-                  <span>{spreadsheetId ? 'Sync All 5 Tabs via Google OAuth' : 'Connect & Create Google Sheet (OAuth)'}</span>
-                </>
-              )}
-            </button>
-          </div>
-        )}
-
-        {/* TAB 3: 5-SHEET CSV EXPORT */}
+        {/* TAB 2: 5-SHEET CSV EXPORT */}
         {activeMode === 'csv' && (
           <div className="p-4 rounded-xl bg-indigo-500/10 border border-indigo-500/20 space-y-3">
             <div className="flex items-center justify-between">
@@ -613,7 +491,7 @@ export const GoogleSheetsModal: React.FC<GoogleSheetsModalProps> = ({ isOpen, on
             <p className="text-[11px] text-slate-600 dark:text-zinc-400 leading-relaxed">
               Instantly download all 5 formatted CSV tables (<strong>Summary</strong>, <strong>Accounts</strong>,{' '}
               <strong>Transactions</strong>, <strong>Investments</strong>, and <strong>Budgets</strong>) for{' '}
-              <span className="font-mono">{user?.email}</span> to import directly into Google Sheets.
+              <span className="font-mono">{user?.email}</span> to import directly into Google Sheets or Microsoft Excel.
             </p>
             <button
               type="button"
