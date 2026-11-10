@@ -121,6 +121,10 @@ export interface UserSettings {
   rateSource?: string;
   privacyModeDefault: boolean;
   theme: 'dark' | 'light';
+  googleSpreadsheetId?: string;
+  googleSheetWebhookUrl?: string;
+  googleSheetLastSynced?: string;
+  googleSheetAutoSync?: boolean;
 }
 
 export interface DashboardStats {

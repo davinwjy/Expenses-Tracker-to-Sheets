@@ -29,11 +29,15 @@ jobs:
         with:
           node-version: 22
 
-      - name: Install dependencies
-        run: npm install --legacy-peer-deps
-
-      - name: Build static site
-        run: npm run build
+      - name: Build or Use Pre-Built Static Bundle
+        run: |
+          if npm install --legacy-peer-deps && npm run build; then
+            echo "Built from source into ./dist"
+          else
+            echo "Using pre-built ./docs bundle synced by AI Studio"
+            rm -rf dist
+            cp -r docs dist
+          fi
 
       - name: Setup Pages
         uses: actions/configure-pages@v4

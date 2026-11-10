@@ -1,8 +1,43 @@
 import tailwindcss from '@tailwindcss/vite';
 import react from '@vitejs/plugin-react';
+import fs from 'fs';
 import path from 'path';
 import {defineConfig} from 'vite';
 import { VitePWA } from 'vite-plugin-pwa';
+
+function syncGitHubAndAndroidAssetsPlugin() {
+  return {
+    name: 'sync-github-and-android-assets',
+    closeBundle() {
+      try {
+        const distDir = path.resolve('dist');
+        if (!fs.existsSync(distDir)) return;
+
+        // 1. Sync to /docs for GitHub Pages deployment
+        const docsDir = path.resolve('docs');
+        fs.rmSync(docsDir, { recursive: true, force: true });
+        fs.cpSync(distDir, docsDir, { recursive: true });
+
+        // 2. Sync to /android/app/src/main/assets/public for Capacitor Android APK
+        const androidPublicDir = path.resolve('android/app/src/main/assets/public');
+        if (fs.existsSync(path.resolve('android/app'))) {
+          const cordovaJs = path.join(androidPublicDir, 'cordova.js');
+          const cordovaPluginsJs = path.join(androidPublicDir, 'cordova_plugins.js');
+          const savedCordova = fs.existsSync(cordovaJs) ? fs.readFileSync(cordovaJs) : null;
+          const savedCordovaPlugins = fs.existsSync(cordovaPluginsJs) ? fs.readFileSync(cordovaPluginsJs) : null;
+
+          fs.rmSync(androidPublicDir, { recursive: true, force: true });
+          fs.cpSync(distDir, androidPublicDir, { recursive: true });
+
+          if (savedCordova) fs.writeFileSync(cordovaJs, savedCordova);
+          if (savedCordovaPlugins) fs.writeFileSync(cordovaPluginsJs, savedCordovaPlugins);
+        }
+      } catch (err) {
+        console.warn('Asset sync warning:', err);
+      }
+    },
+  };
+}
 
 export default defineConfig(() => {
   return {
@@ -10,6 +45,7 @@ export default defineConfig(() => {
     plugins: [
       react(),
       tailwindcss(),
+      syncGitHubAndAndroidAssetsPlugin(),
       VitePWA({
         registerType: 'autoUpdate',
         includeAssets: ['favicon.ico', 'apple-touch-icon.png', 'icon.svg'],

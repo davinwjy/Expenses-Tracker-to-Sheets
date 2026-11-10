@@ -22,7 +22,13 @@ import { firestoreService } from '../lib/firestoreService';
 import { computeStats } from '../lib/statsHelper';
 import { exchangeRateService } from '../lib/exchangeRateService';
 import { offlineSyncManager } from '../lib/offlineSync';
-import { getCachedGoogleSheetsToken, syncFinancialDataToSheet } from '../lib/googleSheetsSync';
+import {
+  getCachedGoogleSheetsToken,
+  syncFinancialDataToSheet,
+  syncFinancialDataViaWebhook,
+  getStoredSheetConfig,
+  saveStoredSheetConfig,
+} from '../lib/googleSheetsSync';
 
 interface FinanceContextType {
   // Offline & Synchronization Status
@@ -178,6 +184,12 @@ interface FinanceContextType {
   setPayBillCard: (a: Account | null) => void;
   isGoogleSheetsModalOpen: boolean;
   setIsGoogleSheetsModalOpen: (v: boolean) => void;
+  saveGoogleSheetSettings: (cfg: {
+    spreadsheetId?: string;
+    webhookUrl?: string;
+    autoSync?: boolean;
+    lastSynced?: string;
+  }) => Promise<void>;
 
   // Budgeting Operations
   budgets: CategoryBudget[];
@@ -567,6 +579,9 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
       setAccounts(data.accounts);
       setTransactions(data.transactions);
       setInvestments(normalizedInvestments);
+      if (data.budgets && data.budgets.length > 0) {
+        setBudgets(data.budgets);
+      }
       setSettings(data.settings);
       const rate = data.settings?.usdIdrRate || 15850;
       setUsdIdrRate(rate);
@@ -586,6 +601,7 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
         accounts: data.accounts,
         transactions: data.transactions,
         investments: normalizedInvestments,
+        budgets: data.budgets && data.budgets.length > 0 ? data.budgets : undefined,
         settings: data.settings,
         usdIdrRate: rate,
         rateSource: data.settings?.rateSource,
@@ -1882,6 +1898,103 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
     };
   }, [user, isFirebase, fetchLatestRate, showNotification]);
 
+  // Save Google Sheets configuration to both localStorage and Firebase Firestore (so Web & Android APK stay linked)
+  const saveGoogleSheetSettings = useCallback(
+    async (cfg: {
+      spreadsheetId?: string;
+      webhookUrl?: string;
+      autoSync?: boolean;
+      lastSynced?: string;
+    }) => {
+      if (!user) return;
+      const saved = saveStoredSheetConfig(user.email, cfg);
+      const nextSettings: UserSettings = {
+        userId: user.id,
+        usdIdrRate,
+        privacyModeDefault: isPrivacyMode,
+        theme,
+        ...(settings || {}),
+        googleSpreadsheetId: saved.spreadsheetId || undefined,
+        googleSheetWebhookUrl: saved.webhookUrl || undefined,
+        googleSheetAutoSync: saved.autoSync,
+        googleSheetLastSynced: saved.lastSynced || undefined,
+      };
+      setSettings(nextSettings);
+      if (isFirebase && isOnline) {
+        try {
+          await firestoreService.saveSettings(nextSettings);
+        } catch (err) {
+          console.warn('Failed to persist Google Sheet settings to Firestore:', err);
+        }
+      }
+    },
+    [user, usdIdrRate, isPrivacyMode, theme, settings, isFirebase, isOnline]
+  );
+
+  // Automatic Real-Time Google Sheets Background Sync on any data change (Accounts, Transactions, Investments, Budgets)
+  const lastSheetPayloadHashRef = useRef<string>('');
+  useEffect(() => {
+    if (!user || isLoading || !isOnline) return;
+
+    const sheetCfg = getStoredSheetConfig(user.email, settings);
+    if (!sheetCfg.autoSync) return;
+
+    const oauthToken = getCachedGoogleSheetsToken();
+    const hasWebhook = Boolean(sheetCfg.webhookUrl && sheetCfg.webhookUrl.startsWith('https://'));
+    const hasOAuthSheet = Boolean(oauthToken && sheetCfg.spreadsheetId);
+
+    if (!hasWebhook && !hasOAuthSheet) return;
+
+    const signature = JSON.stringify({
+      u: user.email,
+      a: accounts.map((x) => [x.id, x.name, x.balance, x.updatedAt]),
+      t: transactions.map((x) => [x.id, x.amount, x.date, x.category, x.notes]),
+      i: investments.map((x) => [x.id, x.amountInvested, x.currentValue, x.units, x.updatedAt]),
+      b: budgets.map((x) => [x.id, x.category, x.monthlyLimit, x.month]),
+    });
+
+    if (signature === lastSheetPayloadHashRef.current) return;
+
+    const timer = setTimeout(async () => {
+      try {
+        if (hasWebhook) {
+          const res = await syncFinancialDataViaWebhook(sheetCfg.webhookUrl, {
+            userEmail: user.email,
+            usdIdrRate,
+            stats,
+            accounts,
+            transactions,
+            investments,
+            budgets,
+          });
+          const nowStr = new Date().toLocaleString();
+          saveStoredSheetConfig(user.email, {
+            spreadsheetId: res.spreadsheetId || sheetCfg.spreadsheetId,
+            lastSynced: nowStr,
+          });
+          lastSheetPayloadHashRef.current = signature;
+        } else if (hasOAuthSheet && oauthToken) {
+          await syncFinancialDataToSheet(oauthToken, sheetCfg.spreadsheetId, {
+            userEmail: user.email,
+            usdIdrRate,
+            stats,
+            accounts,
+            transactions,
+            investments,
+            budgets,
+          });
+          const nowStr = new Date().toLocaleString();
+          saveStoredSheetConfig(user.email, { lastSynced: nowStr });
+          lastSheetPayloadHashRef.current = signature;
+        }
+      } catch (err) {
+        console.warn('Background Google Sheets auto-sync warning:', err);
+      }
+    }, 1500);
+
+    return () => clearTimeout(timer);
+  }, [user, accounts, transactions, investments, budgets, usdIdrRate, stats, settings, isLoading, isOnline]);
+
   return (
     <FinanceContext.Provider
       value={{
@@ -1968,6 +2081,7 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
         setPayBillCard,
         isGoogleSheetsModalOpen,
         setIsGoogleSheetsModalOpen,
+        saveGoogleSheetSettings,
 
         // Budgeting
         budgets,

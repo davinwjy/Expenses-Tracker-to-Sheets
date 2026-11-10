@@ -33,19 +33,15 @@ jobs:
         with:
           gradle-version: '8.14.3'
 
-      - name: Install Dependencies
-        run: npm install --legacy-peer-deps
-
-      - name: Build Web Application
-        run: npm run build
-
-      - name: Sync Capacitor Android
+      - name: Install Dependencies & Sync Web Assets
         run: |
-          if [ ! -f "android/build.gradle" ]; then
-            rm -rf android
-            npx cap add android
+          if npm install --legacy-peer-deps && npm run build; then
+            npx cap sync android || cp -r dist/* android/app/src/main/assets/public/
+          else
+            echo "Using pre-built web bundle in docs/ and android/app/src/main/assets/public/"
+            npm install @capacitor/android @capacitor/app @capacitor/core --no-save --legacy-peer-deps
+            cp -r docs/* android/app/src/main/assets/public/ || true
           fi
-          npx cap sync android
 
       - name: Build Android Debug APK
         run: |

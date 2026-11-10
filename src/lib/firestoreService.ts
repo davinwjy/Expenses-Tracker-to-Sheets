@@ -18,7 +18,7 @@ import {
   Unsubscribe,
 } from 'firebase/firestore';
 import { firebaseAuth, firestoreDb } from './firebase';
-import { User, Account, Transaction, Investment, UserSettings } from '../types';
+import { User, Account, Transaction, Investment, UserSettings, CategoryBudget } from '../types';
 import { isUserAdmin } from './admin';
 
 /**
@@ -176,6 +176,7 @@ export const firestoreService = {
       accounts: Account[];
       transactions: Transaction[];
       investments: Investment[];
+      budgets: CategoryBudget[];
       settings: UserSettings;
     }) => void
   ): () => void {
@@ -184,6 +185,7 @@ export const firestoreService = {
     let currentAccounts: Account[] = [];
     let currentTransactions: Transaction[] = [];
     let currentInvestments: Investment[] = [];
+    let currentBudgets: CategoryBudget[] = [];
     let currentSettings: UserSettings = {
       userId,
       usdIdrRate: 15850,
@@ -196,6 +198,7 @@ export const firestoreService = {
         accounts: [...currentAccounts],
         transactions: [...currentTransactions],
         investments: [...currentInvestments],
+        budgets: [...currentBudgets],
         settings: { ...currentSettings },
       });
     };
@@ -224,7 +227,14 @@ export const firestoreService = {
       trigger();
     });
 
-    // 4. Settings listener
+    // 4. Budgets listener
+    const qBudgets = query(collection(firestoreDb, 'budgets'), where('userId', '==', userId));
+    const unsubBudgets = onSnapshot(qBudgets, (snapshot) => {
+      currentBudgets = snapshot.docs.map((d) => d.data() as CategoryBudget);
+      trigger();
+    });
+
+    // 5. Settings listener
     const docSettings = doc(firestoreDb, 'settings', userId);
     const unsubSettings = onSnapshot(docSettings, (snapshot) => {
       if (snapshot.exists()) {
@@ -237,6 +247,7 @@ export const firestoreService = {
       unsubAccounts();
       unsubTransactions();
       unsubInvestments();
+      unsubBudgets();
       unsubSettings();
     };
   },
@@ -299,6 +310,7 @@ export const firestoreService = {
       const accounts = (store.accounts || []).map((a: any) => ({ ...a, userId }));
       const transactions = (store.transactions || []).map((t: any) => ({ ...t, userId }));
       const investments = (store.investments || []).map((i: any) => ({ ...i, userId }));
+      const budgets = (store.budgets || []).map((b: any) => ({ ...b, userId }));
 
       for (const a of accounts) {
         await setDoc(doc(firestoreDb, 'accounts', a.id), sanitizeForFirestore(a));
@@ -310,6 +322,10 @@ export const firestoreService = {
       }
       for (const i of investments) {
         await setDoc(doc(firestoreDb, 'investments', i.id), sanitizeForFirestore(i));
+        count++;
+      }
+      for (const b of budgets) {
+        await setDoc(doc(firestoreDb, 'budgets', b.id), sanitizeForFirestore(b));
         count++;
       }
     } catch (err) {
