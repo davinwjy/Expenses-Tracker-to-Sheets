@@ -1,0 +1,6 @@
+{
+  "summary":  "Implementation plan for replacing Firebase with Google Drive & Google Sheets backend storage using Google Workspace OAuth and automatic sheet creation.",
+  "updatedAt":  "2026-11-10T01:07:34.010235610Z",
+  "requestFeedback":  true,
+  "userFacing":  true
+}

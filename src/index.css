@@ -1,0 +1,388 @@
+@import "tailwindcss";
+@custom-variant dark (&:where(.dark, .dark *));
+
+@layer base {
+  body {
+    font-family: 'Plus Jakarta Sans', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    transition: background-color 0.15s ease, color 0.15s ease;
+    @apply bg-slate-100 text-slate-900 dark:bg-[#08090c] dark:text-zinc-100;
+    letter-spacing: -0.01em;
+  }
+  
+  .font-mono,
+  .tabular-nums {
+    font-family: 'JetBrains Mono', 'SF Mono', Menlo, Monaco, Consolas, 'Liberation Mono', monospace;
+    font-variant-numeric: tabular-nums;
+  }
+}
+
+/* Bloomberg Terminal Razor Styling Utilities */
+.terminal-grid-border {
+  border-color: #1a1f2c;
+}
+
+.terminal-surface {
+  background-color: #0d1017;
+}
+
+.terminal-panel {
+  background-color: #121620;
+}
+
+/* Privacy Mode CSS Filter Blur Utility */
+.privacy-blur {
+  filter: blur(8px) !important;
+  user-select: none !important;
+  pointer-events: none !important;
+  opacity: 0.85 !important;
+  transition: filter 0.2s ease-in-out, opacity 0.2s ease-in-out;
+}
+
+/* Custom smooth dark scrollbar */
+::-webkit-scrollbar {
+  width: 5px;
+  height: 5px;
+}
+
+::-webkit-scrollbar-track {
+  background: #08090c;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #1b212e;
+  border-radius: 2px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #283145;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #334155;
+}
+
+/* Light mode scrollbar */
+html.light ::-webkit-scrollbar-track,
+html[data-theme="light"] ::-webkit-scrollbar-track {
+  background: #f1f5f9;
+}
+
+html.light ::-webkit-scrollbar-thumb,
+html[data-theme="light"] ::-webkit-scrollbar-thumb {
+  background: #cbd5e1;
+}
+
+html.light ::-webkit-scrollbar-thumb:hover,
+html[data-theme="light"] ::-webkit-scrollbar-thumb:hover {
+  background: #94a3b8;
+}
+
+/* Hide spin buttons on number inputs */
+input::-webkit-outer-spin-button,
+input::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+input[type=number] {
+  -moz-appearance: textfield;
+}
+
+/* -------------------------------------------------------------
+   LIGHT MODE DESIGN SYSTEM OVERRIDES
+   Transforms all views into a clean, modern, high-contrast light theme
+   ------------------------------------------------------------- */
+
+html.light body,
+html[data-theme="light"] body {
+  background-color: #f8fafc;
+  color: #0f172a;
+}
+
+/* App background */
+html.light .bg-\[\#0a0e17\],
+html[data-theme="light"] .bg-\[\#0a0e17\] {
+  background-color: #f8fafc !important;
+  color: #0f172a !important;
+}
+
+/* Sidebar background */
+html.light .bg-\[\#0d121d\],
+html[data-theme="light"] .bg-\[\#0d121d\] {
+  background-color: #ffffff !important;
+  color: #0f172a !important;
+  border-color: #e2e8f0 !important;
+}
+
+/* ELIMINATE DARK GRADIENTS ON CARDS IN LIGHT MODE */
+/* Fixes Total Networth, List Accounts, Total Portfolio Value, Admin Console */
+html.light [class*="from-slate-900"],
+html.light [class*="from-slate-950"],
+html.light [class*="to-slate-950"],
+html.light [class*="to-slate-900"],
+html.light [class*="to-[#0e1726]"],
+html[data-theme="light"] [class*="from-slate-900"],
+html[data-theme="light"] [class*="from-slate-950"],
+html[data-theme="light"] [class*="to-slate-950"],
+html[data-theme="light"] [class*="to-slate-900"],
+html[data-theme="light"] [class*="to-[#0e1726]"] {
+  background-image: none !important;
+  background-color: #ffffff !important;
+  border-color: #e2e8f0 !important;
+  box-shadow: 0 1px 3px 0 rgb(0 0 0 / 0.06), 0 1px 2px -1px rgb(0 0 0 / 0.06) !important;
+}
+
+/* Allow progress bars & accent badges to preserve their rich gradients */
+html.light [class*="from-emerald-500"],
+html.light [class*="from-indigo-500"],
+html.light [class*="from-blue-500"],
+html.light [class*="from-rose-500"],
+html.light [class*="from-amber-500"],
+html[data-theme="light"] [class*="from-emerald-500"],
+html[data-theme="light"] [class*="from-indigo-500"],
+html[data-theme="light"] [class*="from-blue-500"],
+html[data-theme="light"] [class*="from-rose-500"],
+html[data-theme="light"] [class*="from-amber-500"] {
+  background-image: revert !important;
+}
+
+/* Main card containers */
+html.light .bg-slate-900,
+html.light .bg-slate-900\/95,
+html.light .bg-slate-900\/90,
+html.light .bg-slate-900\/80,
+html.light .bg-slate-900\/70,
+html.light .bg-slate-900\/60,
+html.light .bg-slate-900\/50,
+html[data-theme="light"] .bg-slate-900,
+html[data-theme="light"] .bg-slate-900\/95,
+html[data-theme="light"] .bg-slate-900\/90,
+html[data-theme="light"] .bg-slate-900\/80 {
+  background-color: #ffffff !important;
+  border-color: #e2e8f0 !important;
+  box-shadow: 0 1px 3px 0 rgb(0 0 0 / 0.05), 0 1px 2px -1px rgb(0 0 0 / 0.05);
+}
+
+/* Sub-panels, inputs, and deep backgrounds */
+html.light .bg-slate-950,
+html.light .bg-slate-950\/90,
+html.light .bg-slate-950\/80,
+html.light .bg-slate-950\/70,
+html.light .bg-slate-950\/60,
+html.light .bg-slate-950\/40,
+html[data-theme="light"] .bg-slate-950,
+html[data-theme="light"] .bg-slate-950\/90,
+html[data-theme="light"] .bg-slate-950\/80,
+html[data-theme="light"] .bg-slate-950\/70 {
+  background-color: #f8fafc !important;
+  border-color: #e2e8f0 !important;
+}
+
+/* Secondary interactive panels & tags (except buttons) */
+html.light div.bg-slate-800,
+html.light div.bg-slate-800\/90,
+html.light div.bg-slate-800\/80,
+html.light div.bg-slate-800\/60,
+html.light div.bg-slate-800\/40,
+html.light span.bg-slate-800,
+html.light span.bg-slate-800\/80,
+html[data-theme="light"] div.bg-slate-800,
+html[data-theme="light"] span.bg-slate-800 {
+  background-color: #f1f5f9 !important;
+  border-color: #e2e8f0 !important;
+  color: #1e293b !important;
+}
+
+/* Header blur */
+html.light header,
+html[data-theme="light"] header {
+  background-color: rgba(255, 255, 255, 0.9) !important;
+  border-color: #e2e8f0 !important;
+}
+
+/* Borders */
+html.light .border-slate-800,
+html.light .border-slate-800\/80,
+html.light .border-slate-800\/90,
+html.light .border-slate-800\/70,
+html.light .border-slate-800\/60,
+html.light .border-slate-800\/50,
+html.light .border-slate-800\/40,
+html.light .border-slate-700,
+html.light .border-slate-700\/80,
+html.light .border-slate-700\/60,
+html[data-theme="light"] .border-slate-800,
+html[data-theme="light"] .border-slate-700 {
+  border-color: #e2e8f0 !important;
+}
+
+/* -------------------------------------------------------------
+   BUTTON VISIBILITY & CONTRAST RULES
+   Ensures all buttons are crisp, high-contrast, and easy to read
+   ------------------------------------------------------------- */
+
+/* 1. Primary Colored Buttons (Indigo, Blue, Rose, Emerald dark) MUST KEEP WHITE TEXT */
+html.light .bg-indigo-600,
+html.light .bg-indigo-700,
+html.light .bg-blue-600,
+html.light .bg-blue-700,
+html.light .bg-rose-600,
+html.light .bg-rose-700,
+html.light .bg-purple-600,
+html.light button.bg-indigo-600,
+html.light button.bg-blue-600,
+html.light button.bg-rose-600,
+html[data-theme="light"] .bg-indigo-600,
+html[data-theme="light"] .bg-blue-600,
+html[data-theme="light"] .bg-rose-600 {
+  color: #ffffff !important;
+}
+
+html.light .bg-indigo-600 *,
+html.light .bg-indigo-700 *,
+html.light .bg-blue-600 *,
+html.light .bg-blue-700 *,
+html.light .bg-rose-600 *,
+html.light .bg-rose-700 *,
+html.light .bg-purple-600 *,
+html.light button.bg-indigo-600 *,
+html.light button.bg-blue-600 *,
+html.light button.bg-rose-600 *,
+html[data-theme="light"] button.bg-indigo-600 *,
+html[data-theme="light"] button.bg-blue-600 *,
+html[data-theme="light"] button.bg-rose-600 * {
+  color: #ffffff !important;
+}
+
+/* 2. Emerald / Green Action Buttons MUST HAVE CRISP DEEP TEXT */
+html.light .bg-emerald-500,
+html.light .bg-emerald-400,
+html.light button.bg-emerald-500,
+html.light button.bg-emerald-400,
+html[data-theme="light"] .bg-emerald-500,
+html[data-theme="light"] button.bg-emerald-500 {
+  background-color: #10b981 !important;
+  color: #022c22 !important;
+}
+
+html.light .bg-emerald-500 *,
+html.light .bg-emerald-400 *,
+html.light button.bg-emerald-500 *,
+html.light button.bg-emerald-400 *,
+html[data-theme="light"] button.bg-emerald-500 * {
+  color: #022c22 !important;
+}
+
+/* 3. Secondary & Neutral Buttons (Slate 800 / Slate 900) in Light Mode */
+html.light button.bg-slate-800,
+html.light button.bg-slate-800\/70,
+html.light button.bg-slate-800\/80,
+html.light button.bg-slate-800\/90,
+html.light button.bg-slate-900,
+html.light button.bg-slate-950,
+html[data-theme="light"] button.bg-slate-800,
+html[data-theme="light"] button.bg-slate-800\/70,
+html[data-theme="light"] button.bg-slate-900 {
+  background-color: #f1f5f9 !important;
+  border-color: #cbd5e1 !important;
+  color: #0f172a !important;
+  box-shadow: 0 1px 2px 0 rgb(0 0 0 / 0.05);
+}
+
+html.light button.bg-slate-800:hover,
+html.light button.bg-slate-800\/70:hover,
+html.light button.bg-slate-900:hover,
+html.light button.bg-slate-950:hover,
+html[data-theme="light"] button.bg-slate-800:hover,
+html[data-theme="light"] button.bg-slate-900:hover {
+  background-color: #e2e8f0 !important;
+  border-color: #94a3b8 !important;
+  color: #020617 !important;
+}
+
+/* 4. Secondary button text inside slate buttons */
+html.light button.bg-slate-800 span,
+html.light button.bg-slate-800\/70 span,
+html.light button.bg-slate-900 span,
+html[data-theme="light"] button.bg-slate-800 span {
+  color: #1e293b !important;
+}
+
+/* 5. Sub-tabs & filter buttons in light mode */
+html.light button.text-slate-400:hover,
+html.light button.text-slate-300:hover {
+  color: #0f172a !important;
+}
+
+/* Text colors (Carefully excluding colored buttons) */
+html.light :not(button.bg-indigo-600):not(button.bg-blue-600):not(button.bg-rose-600):not(button.bg-purple-600):not(.bg-indigo-600):not(.bg-blue-600):not(.bg-rose-600):not(.bg-purple-600).text-white,
+html.light :not(button.bg-indigo-600):not(button.bg-blue-600):not(button.bg-rose-600):not(button.bg-purple-600):not(.bg-indigo-600):not(.bg-blue-600):not(.bg-rose-600):not(.bg-purple-600).text-slate-100,
+html.light :not(button.bg-indigo-600):not(button.bg-blue-600):not(button.bg-rose-600):not(button.bg-purple-600):not(.bg-indigo-600):not(.bg-blue-600):not(.bg-rose-600):not(.bg-purple-600).text-slate-200,
+html[data-theme="light"] :not(button.bg-indigo-600):not(button.bg-blue-600):not(button.bg-rose-600):not(button.bg-purple-600):not(.bg-indigo-600):not(.bg-blue-600):not(.bg-rose-600):not(.bg-purple-600).text-white,
+html[data-theme="light"] :not(button.bg-indigo-600):not(button.bg-blue-600):not(button.bg-rose-600):not(button.bg-purple-600):not(.bg-indigo-600):not(.bg-blue-600):not(.bg-rose-600):not(.bg-purple-600).text-slate-100,
+html[data-theme="light"] :not(button.bg-indigo-600):not(button.bg-blue-600):not(button.bg-rose-600):not(button.bg-purple-600):not(.bg-indigo-600):not(.bg-blue-600):not(.bg-rose-600):not(.bg-purple-600).text-slate-200 {
+  color: #0f172a !important;
+}
+
+html.light .text-slate-300,
+html[data-theme="light"] .text-slate-300 {
+  color: #334155 !important;
+}
+
+html.light .text-slate-400,
+html[data-theme="light"] .text-slate-400 {
+  color: #64748b !important;
+}
+
+html.light .text-slate-500,
+html[data-theme="light"] .text-slate-500 {
+  color: #64748b !important;
+}
+
+/* Hover states */
+html.light .hover\:bg-slate-800:hover,
+html.light .hover\:bg-slate-800\/80:hover,
+html.light .hover\:bg-slate-800\/60:hover,
+html.light .hover\:bg-slate-800\/40:hover,
+html[data-theme="light"] .hover\:bg-slate-800:hover {
+  background-color: #e2e8f0 !important;
+}
+
+html.light .hover\:bg-slate-900:hover,
+html[data-theme="light"] .hover\:bg-slate-900:hover {
+  background-color: #f1f5f9 !important;
+}
+
+/* Form inputs */
+html.light input:not([type="checkbox"]):not([type="radio"]),
+html.light select,
+html.light textarea,
+html[data-theme="light"] input:not([type="checkbox"]):not([type="radio"]),
+html[data-theme="light"] select,
+html[data-theme="light"] textarea {
+  background-color: #ffffff !important;
+  border-color: #cbd5e1 !important;
+  color: #0f172a !important;
+}
+
+html.light input::placeholder,
+html.light textarea::placeholder,
+html[data-theme="light"] input::placeholder,
+html[data-theme="light"] textarea::placeholder {
+  color: #94a3b8 !important;
+}
+
+/* Mobile bottom dock in light mode */
+html.light .md\:hidden.fixed.bottom-0,
+html[data-theme="light"] .md\:hidden.fixed.bottom-0 {
+  background-color: rgba(255, 255, 255, 0.95) !important;
+  border-color: #e2e8f0 !important;
+  box-shadow: 0 -4px 12px rgba(0, 0, 0, 0.05);
+}
+
+/* Modals backdrop */
+html.light .fixed.inset-0.bg-black\/75,
+html.light .fixed.inset-0.bg-black\/60,
+html[data-theme="light"] .fixed.inset-0.bg-black\/75 {
+  background-color: rgba(15, 23, 42, 0.45) !important;
+  backdrop-filter: blur(4px);
+}

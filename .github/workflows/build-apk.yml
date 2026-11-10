@@ -1,0 +1,86 @@
+name: Build Android APK (WealthTrack Pro)
+
+on:
+  push:
+    branches: ['main', 'master']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build-apk:
+    name: Build & Package Android APK
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Source Code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js 22 (LTS)
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Setup Java JDK 21 (LTS)
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '21'
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.14.3'
+
+      - name: Install Dependencies
+        run: npm install --legacy-peer-deps
+
+      - name: Build Web Application
+        run: npm run build
+
+      - name: Sync Capacitor Android
+        run: |
+          if [ ! -f "android/build.gradle" ]; then
+            rm -rf android
+            npx cap add android
+          fi
+          npx cap sync android
+
+      - name: Build Android Debug APK
+        run: |
+          cd android
+          if [ -f "gradlew" ]; then
+            chmod +x gradlew
+            ./gradlew assembleDebug --no-daemon
+          else
+            gradle assembleDebug --no-daemon
+          fi
+
+      - name: Prepare Clean APK Name
+        run: |
+          cp android/app/build/outputs/apk/debug/app-debug.apk android/app/build/outputs/apk/debug/WealthTrack-Pro.apk
+
+      - name: Upload APK Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: WealthTrack-Pro-APK
+          path: android/app/build/outputs/apk/debug/WealthTrack-Pro.apk
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Publish to GitHub Releases
+        uses: ncipollo/release-action@v1
+        with:
+          artifacts: "android/app/build/outputs/apk/debug/WealthTrack-Pro.apk"
+          tag: "v1.0.0-apk"
+          name: "WealthTrack Pro v1.0.0 (Android APK)"
+          body: |
+            ### 📱 WealthTrack Pro Mobile APK
+            - **Package**: `com.wealthtrack.app`
+            - **Fitur**: Sinkronisasi otomatis 100% dengan akun Firebase Cloud
+            - **Cara Install**: Download file `WealthTrack-Pro.apk` di bawah dan pasang di HP Android Anda.
+          allowUpdates: true
+          draft: false
+          prerelease: false
+          token: ${{ secrets.GITHUB_TOKEN }}

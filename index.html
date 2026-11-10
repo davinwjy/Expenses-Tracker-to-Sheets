@@ -1,0 +1,117 @@
+<!doctype html>
+<html lang="en" class="dark">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+    <title>WealthTrack Pro - Expense & Portfolio Manager</title>
+    <meta name="description" content="Multi-device personal finance tracker with daily IDR expense tracking, bank-to-cash transfers, direct investment funding, privacy mode, and multi-asset portfolio stats (USD, Bitcoin, Saham, RDPU, ETF USA)." />
+    <meta property="og:title" content="WealthTrack Pro - Expense & Portfolio Manager" />
+    <meta property="og:description" content="Multi-device personal finance tracker with daily IDR expense tracking, bank-to-cash transfers, direct investment funding, privacy mode, and multi-asset portfolio stats (USD, Bitcoin, Saham, RDPU, ETF USA)." />
+    <meta property="og:type" content="website" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="theme-color" content="#08090c" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-title" content="WealthTrack" />
+    <link rel="apple-touch-icon" href="./apple-touch-icon.png" />
+    <link rel="icon" type="image/svg+xml" href="./icon.svg" />
+    <link rel="icon" type="image/x-icon" href="./favicon.ico" />
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <script>
+      // Suppress Vite HMR WebSocket errors in AI Studio iframe environment
+      (function() {
+        if (typeof window !== 'undefined') {
+          // 1. Suppress console.error logging from @vite/client
+          var _origErr = console.error;
+          console.error = function() {
+            var msg = arguments[0] ? String(arguments[0]) : '';
+            if (msg.includes('WebSocket') || msg.includes('[vite]') || msg.includes('vite-hmr')) {
+              return;
+            }
+            _origErr.apply(console, arguments);
+          };
+
+          // 2. Intercept WebSocket if targeted at Vite HMR
+          if (window.WebSocket) {
+            var RealWebSocket = window.WebSocket;
+            window.WebSocket = function(url, protocols) {
+              var isVite = (typeof url === 'string' && (url.includes('vite') || url.includes('/@vite/client'))) ||
+                           protocols === 'vite-hmr' ||
+                           (Array.isArray(protocols) && protocols.includes('vite-hmr'));
+              if (isVite) {
+                var dummy = new EventTarget();
+                dummy.readyState = 1; // OPEN
+                dummy.bufferedAmount = 0;
+                dummy.extensions = '';
+                dummy.protocol = 'vite-hmr';
+                dummy.binaryType = 'blob';
+                dummy.url = url;
+                dummy.send = function() {};
+                dummy.close = function() {};
+                dummy.onopen = null;
+                dummy.onclose = null;
+                dummy.onerror = null;
+                dummy.onmessage = null;
+                setTimeout(function() {
+                  if (typeof dummy.onopen === 'function') dummy.onopen({ type: 'open' });
+                  dummy.dispatchEvent(new Event('open'));
+                }, 10);
+                return dummy;
+              }
+              return new RealWebSocket(url, protocols);
+            };
+            window.WebSocket.prototype = RealWebSocket.prototype;
+            window.WebSocket.CONNECTING = 0;
+            window.WebSocket.OPEN = 1;
+            window.WebSocket.CLOSING = 2;
+            window.WebSocket.CLOSED = 3;
+          }
+
+          // 3. Catch any global error events referencing WebSocket
+          window.addEventListener('error', function(event) {
+            if (event && (
+              (event.message && (event.message.includes('WebSocket') || event.message.includes('[vite]'))) ||
+              (event.filename && event.filename.includes('@vite/client'))
+            )) {
+              event.stopImmediatePropagation();
+              event.preventDefault();
+              return true;
+            }
+          }, true);
+
+          window.addEventListener('unhandledrejection', function(event) {
+            var reasonStr = event.reason ? (event.reason.message || String(event.reason)) : '';
+            if (reasonStr.includes('WebSocket') || reasonStr.includes('[vite]')) {
+              event.stopImmediatePropagation();
+              event.preventDefault();
+              return true;
+            }
+          }, true);
+        }
+
+        // Ensure trailing slash for GitHub Pages repo subdirectories so relative ./assets resolve correctly
+        if (window.location.pathname.slice(-1) !== '/' && !window.location.pathname.split('/').pop().includes('.')) {
+          window.location.replace(window.location.pathname + '/' + window.location.search + window.location.hash);
+        }
+      })();
+    </script>
+  </head>
+  <body class="bg-[#08090c] text-zinc-100 antialiased selection:bg-emerald-500 selection:text-slate-950 min-h-screen">
+    <div id="root">
+      <div style="min-height: 100vh; background-color: #020617; display: flex; align-items: center; justify-content: center; color: #94a3b8; font-family: sans-serif;">
+        <div style="text-align: center; padding: 20px;">
+          <div style="width: 48px; height: 48px; background: #10b981; border-radius: 14px; margin: 0 auto 16px; display: flex; align-items: center; justify-content: center;">
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#020617" stroke-width="2.5"><path d="M21 12V7H5a2 2 0 0 1 0-4h14v4"/><path d="M3 5v14a2 2 0 0 0 2 2h16v-5"/><path d="M18 12a2 2 0 0 0 0 4h4v-4Z"/></svg>
+          </div>
+          <h2 style="color: #ffffff; margin: 0 0 8px; font-size: 18px; font-weight: bold;">Loading WealthTrack Pro...</h2>
+          <p style="margin: 0; font-size: 13px;">Preparing personal finance dashboard</p>
+        </div>
+      </div>
+    </div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>
+

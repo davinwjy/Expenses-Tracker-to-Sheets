@@ -1,0 +1,160 @@
+{
+  "users": [
+    {
+      "id": "usr_1791802077368_qok28",
+      "email": "test@example.com",
+      "passwordHash": "$2b$10$BGECzJeQWBccaMGbKGmF7eahXihH2PJTg4uOK3ikTSO4IVFYgE8Gy",
+      "name": "Test User",
+      "createdAt": "2026-10-12T10:47:57.368Z"
+    }
+  ],
+  "accounts": [
+    {
+      "id": "acc_1791802077368_1",
+      "userId": "usr_1791802077368_qok28",
+      "name": "BCA Main",
+      "type": "bank",
+      "balance": 12500000,
+      "accountNumber": "•••• 4821",
+      "color": "#3b82f6",
+      "createdAt": "2026-10-12T10:47:57.368Z",
+      "updatedAt": "2026-10-12T10:47:57.368Z"
+    },
+    {
+      "id": "acc_1791802077368_2",
+      "userId": "usr_1791802077368_qok28",
+      "name": "Mandiri Payroll",
+      "type": "bank",
+      "balance": 8000000,
+      "accountNumber": "•••• 9102",
+      "color": "#0284c7",
+      "createdAt": "2026-10-12T10:47:57.368Z",
+      "updatedAt": "2026-10-12T10:47:57.368Z"
+    },
+    {
+      "id": "acc_1791802077368_3",
+      "userId": "usr_1791802077368_qok28",
+      "name": "Physical Cash",
+      "type": "cash",
+      "balance": 850000,
+      "color": "#10b981",
+      "createdAt": "2026-10-12T10:47:57.368Z",
+      "updatedAt": "2026-10-12T10:47:57.368Z"
+    }
+  ],
+  "transactions": [
+    {
+      "id": "tx_1791802077368_1",
+      "userId": "usr_1791802077368_qok28",
+      "type": "expense",
+      "amount": 85000,
+      "accountId": "acc_1791802077368_1",
+      "category": "Food & Dining",
+      "date": "2026-10-12",
+      "notes": "Lunch with team",
+      "createdAt": "2026-10-12T10:47:57.368Z"
+    },
+    {
+      "id": "tx_1791802077368_2",
+      "userId": "usr_1791802077368_qok28",
+      "type": "expense",
+      "amount": 45000,
+      "accountId": "acc_1791802077368_3",
+      "category": "Transportation",
+      "date": "2026-10-12",
+      "notes": "Taxi ride to station",
+      "createdAt": "2026-10-12T10:47:57.368Z"
+    },
+    {
+      "id": "tx_1791802077368_3",
+      "userId": "usr_1791802077368_qok28",
+      "type": "transfer",
+      "amount": 500000,
+      "accountId": "acc_1791802077368_1",
+      "toAccountId": "acc_1791802077368_3",
+      "category": "Transfer to Cash",
+      "date": "2026-10-12",
+      "notes": "ATM Cash withdrawal",
+      "createdAt": "2026-10-12T10:47:57.368Z"
+    }
+  ],
+  "investments": [
+    {
+      "id": "inv_1791802077368_1",
+      "userId": "usr_1791802077368_qok28",
+      "name": "BBCA (Bank Central Asia)",
+      "category": "Saham",
+      "currency": "IDR",
+      "amountInvested": 15000000,
+      "currentValue": 17200000,
+      "units": 17,
+      "platform": "Ajaib / Sekuritas",
+      "notes": "Blue chip banking stock",
+      "createdAt": "2026-10-12T10:47:57.368Z",
+      "updatedAt": "2026-10-12T10:47:57.368Z"
+    },
+    {
+      "id": "inv_1791802077368_2",
+      "userId": "usr_1791802077368_qok28",
+      "name": "Sucorinvest Stable Fund",
+      "category": "RDPU",
+      "currency": "IDR",
+      "amountInvested": 10000000,
+      "currentValue": 10520000,
+      "platform": "Bibit",
+      "notes": "Low risk emergency fund asset",
+      "createdAt": "2026-10-12T10:47:57.368Z",
+      "updatedAt": "2026-10-12T10:47:57.368Z"
+    },
+    {
+      "id": "inv_1791802077368_3",
+      "userId": "usr_1791802077368_qok28",
+      "name": "Bitcoin (BTC)",
+      "category": "Bitcoin",
+      "currency": "USD",
+      "amountInvested": 1200,
+      "currentValue": 1580,
+      "units": 0.0165,
+      "platform": "Indodax / Cold Wallet",
+      "notes": "Digital store of value",
+      "createdAt": "2026-10-12T10:47:57.368Z",
+      "updatedAt": "2026-10-12T10:47:57.368Z"
+    },
+    {
+      "id": "inv_1791802077368_4",
+      "userId": "usr_1791802077368_qok28",
+      "name": "VOO - Vanguard S&P 500",
+      "category": "ETF USA",
+      "currency": "USD",
+      "amountInvested": 1500,
+      "currentValue": 1740,
+      "units": 3.2,
+      "platform": "GoTrade / IBKR",
+      "notes": "Broad market US index ETF",
+      "createdAt": "2026-10-12T10:47:57.368Z",
+      "updatedAt": "2026-10-12T10:47:57.368Z"
+    },
+    {
+      "id": "inv_1791802077368_5",
+      "userId": "usr_1791802077368_qok28",
+      "name": "USD Savings / Cash",
+      "category": "USD",
+      "currency": "USD",
+      "amountInvested": 600,
+      "currentValue": 600,
+      "units": 600,
+      "platform": "Wise / Multi-currency",
+      "notes": "Foreign currency liquid buffer",
+      "createdAt": "2026-10-12T10:47:57.368Z",
+      "updatedAt": "2026-10-12T10:47:57.368Z"
+    }
+  ],
+  "settings": [
+    {
+      "userId": "usr_1791802077368_qok28",
+      "usdIdrRate": 15850,
+      "privacyModeDefault": false,
+      "theme": "dark"
+    }
+  ]
+}
